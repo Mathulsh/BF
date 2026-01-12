@@ -70,8 +70,8 @@ def read_one_from_redis() -> tuple[list[str] | None, bytes | None, Exception | N
     else:
         raise TypeError(f"Unexpected data type from redis: {type(raw_item)!r}")
 
-    data_int_tuple = pickle.loads(data_bytes)
-    task: list[str] = list(map(str, data_int_tuple))
+    data_dict = pickle.loads(data_bytes)
+    task: list[str] = list(map(str, data_dict["features"]))
 
     # ⚠️ 返回 raw_item，用于后续 ACK
     return task, data_bytes, None
