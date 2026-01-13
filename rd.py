@@ -239,3 +239,96 @@ def collect_redis_results_to_duckdb(
         
         # （可选）实时进度
         print(f"已写入 {total_count} 条")
+        
+def collect_redis_results_to_duckdb1(
+    *,
+    redis_host: str,
+    redis_port: int,
+    redis_password: Optional[str],
+    queue_name: str = "results",
+    duckdb_path: str = "results.duckdb",
+    table_name: str = "results",
+    batch_size: int = 5000,
+    sleep_time: float = 0.01,
+):
+    """
+    从 Redis 的 results 队列拉取数据（不丢数据，节省内存版）
+    直接从 results 队列弹出数据，无需中间队列，节省内存，绝对会丢数据，结合duckdb_check.py中的漏数据检查函数使用
+
+    Redis item（pickle）:
+    {
+        "features": list[int],
+        "mean_f1_macro": float
+    }
+    """
+
+    # Redis
+    r = redis.Redis(
+        host=redis_host,
+        port=redis_port,
+        password=redis_password,
+        decode_responses=False
+    )
+
+    # DuckDB
+    con = duckdb.connect(duckdb_path)
+    con.execute(f"""
+    CREATE TABLE IF NOT EXISTS {table_name} (
+        features INTEGER[],
+        mean_f1_macro DOUBLE
+    )
+    """)
+
+    total_count = 0
+    while True:
+        # 直接从 results 队列弹出数据，一次性获取一批数据
+        items = []
+        for _ in range(batch_size):
+            item = r.rpop(queue_name)  # 直接从右侧弹出，无需中间队列
+            if item is None:
+                break
+            items.append(item)
+
+        # ================= 拉取为空 =================
+        if not items:
+            # 检查队列是否还有数据
+            remaining = r.llen(queue_name)
+            
+            if remaining == 0:
+                print("✅ Redis 队列已清空，数据拉取完成")
+                print(f"📊 本次共写入 DuckDB 数据量：{total_count}")
+                break
+
+            # 仍可能有生产者在添加数据
+            time.sleep(sleep_time)
+            continue
+        
+        # ================= 反序列化 =================
+        buffer = []
+        for item in items:
+            data = pickle.loads(item)
+            buffer.append((
+                data["features"],
+                float(data["mean_f1_macro"])
+            ))
+
+        # 2️⃣ 写 DuckDB（事务）
+        try:
+            con.executemany(
+                f"INSERT INTO {table_name} VALUES (?, ?)",
+                buffer
+            )
+        except Exception as e:
+            print(f"❌ 写入 DuckDB 失败: {e}")
+            # 由于数据已经从Redis中弹出，如果写入失败，需要重新设计错误处理策略
+            # 这里我们跳过这批失败的数据，继续处理下一批
+            continue
+        
+        # ✅ 成功写入 → 累计条数
+        batch_count = len(buffer)
+        total_count += batch_count
+        
+        # 由于使用了 rpop 直接弹出，数据已自动从队列中删除，无需额外ACK
+        
+        # （可选）实时进度
+        print(f"已写入 {total_count} 条数据到 DuckDB")
