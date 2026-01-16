@@ -20,10 +20,15 @@ signal.signal(signal.SIGTERM, signal_handler)
 
 # 按顺序生成组合
 whole_numbers: list[int] = list(range(1, 44)) # 1-68标准化后的特征列
-comb = combinations(whole_numbers, 5) # C(68,4) = 814,385种组合(81万)，C(98,4) = 3,764,376种组合(三百七十万)
-# C(68,5) = 10,424,128种组合(一千多万)
-# C(43,4) = 124100(12万)
-# C(43,5) = 962598(96万)
+comb = combinations(whole_numbers, 5)
+# 本机跑 
+# C(43,4) = 124,100(12w)
+# C(43,5) = 962,598(96w) 实际丢失了6824条
+# C(68,4) = 814,385种组合(81w)
+# 上集群跑
+# C(68,5) = 10,424,128种组合(1000w)
+# C(98,4) = 3,612,280种组合(360w)
+# C(98,5) = 67,910,864种组合(6800w)
 
 def batch_generator(iterable, batch_size, start_index=0):
     """分割可迭代对象为指定大小的批次避免内存溢出"""

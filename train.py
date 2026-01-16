@@ -45,12 +45,12 @@ while True:
         # 构建流水线，防止全部归一化，造成数据泄漏
         pipe = Pipeline([
             ('scaler', MinMaxScaler()),
-            ('model', RandomForestClassifier(random_state=0))
+            ('model', RandomForestClassifier(random_state=0, n_jobs=1)) # 尝试单核
         ])
         # 分层划分交叉验证
+        scoring_name = "recall_macro"
         cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
-        pipe.fit(X, y)
-        cv_scores: ndarray = cross_val_score(pipe, X, y, cv=cv, scoring='f1_macro')
+        cv_scores: ndarray = cross_val_score(pipe, X, y, cv=cv, scoring=scoring_name)
         # 训练结果推送到 Redis
         result_data: dict = {
             "features": task,

@@ -129,21 +129,21 @@ def collect_redis_results_to_duckdb(
     redis_password: Optional[str],
     queue_name: str = "results",                 # ✅ 明确：只从 results 拉
     processing_queue: str = "results:processing",
-    duckdb_path: str = "results_(43,4)_3分类.duckdb",
+    duckdb_path: str = "results.duckdb",
     table_name: str = "results",
     batch_size: int = 5000,
     sleep_time: float = 0.01,
 ):
     """
     从 Redis 的 results 队列拉取数据（不丢数据，高速版）
-
+    
     Redis item（pickle）:
     {
         "features": list[int],
-        "mean_f1_macro": float
+        "precision_macro": float
     }
     """
-
+    score_name = "precision_macro" # ⚠️修改
     # Redis
     r = redis.Redis(
         host=redis_host,
@@ -157,7 +157,7 @@ def collect_redis_results_to_duckdb(
     con.execute(f"""
     CREATE TABLE IF NOT EXISTS {table_name} (
         features INTEGER[],
-        mean_f1_macro DOUBLE
+        {score_name} DOUBLE
     )
     """)
 
@@ -214,7 +214,7 @@ def collect_redis_results_to_duckdb(
             data = pickle.loads(item)
             buffer.append((
                 data["features"],
-                float(data["mean_f1_macro"])
+                float(data[score_name]),
             ))
 
         # 2️⃣ 写 DuckDB（事务）
@@ -238,7 +238,7 @@ def collect_redis_results_to_duckdb(
         pipe.execute()
         
         # （可选）实时进度
-        print(f"已写入 {total_count} 条")
+        print(f"已写入 {total_count} 条数据到 DuckDB")
         
 def collect_redis_results_to_duckdb1(
     *,

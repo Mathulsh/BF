@@ -4,15 +4,15 @@ from pandas import DataFrame
 from rd import push_to_redis
 
 # 连接db数据库
-con: duckdb.DuckDBPyConnection = duckdb.connect("/Users/lishihong/projects/Research/HEA/acln/src/acln/results.duckdb")
+con: duckdb.DuckDBPyConnection = duckdb.connect("/Users/lishihong/projects/Research/HEA/acln/src/acln/duckdb/RF/results_(68,4)-f1_macro.duckdb")
 
 # 统计表中记录数
-# count = con.execute("SELECT COUNT(*) FROM results").fetchall()[0][0]
-# print(f"Number of records in results table: {count}")
+count = con.execute("SELECT COUNT(*) FROM results").fetchall()[0][0]
+print(f"Number of records in results table: {count}")
 
 # 取top10分数 
-# top10: DataFrame = con.sql("SELECT * FROM results ORDER BY mean_f1_macro DESC LIMIT 10;").fetchdf()
-# print("Top 10 records:", top10)
+top10: DataFrame = con.sql("SELECT * FROM results ORDER BY mean_f1_macro DESC LIMIT 10;").fetchdf()
+print("Top 10 records:", top10)
 
 # 合并两个 DuckDB 文件
 # con = duckdb.connect("results.duckdb")
@@ -47,3 +47,7 @@ con: duckdb.DuckDBPyConnection = duckdb.connect("/Users/lishihong/projects/Resea
 # push_to_redis(
 #     tuple(map(int, row)) for row in missing_df["features"]
 # )
+
+# 查重
+# df = con.execute("SELECT * FROM results").df()
+# dup_df = df[df.duplicated(subset=["features"], keep=False)] # 非常耗时，不建议使用
