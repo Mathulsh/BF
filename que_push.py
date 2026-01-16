@@ -35,7 +35,7 @@ if __name__ == "__main__":
     with open(flag_file, "w") as f:
         f.write("started")
             
-    batch_size = 10000 # 每批处理数据量
+    batch_size = 100000 # 每批处理数据量
     for i, batch in enumerate(batch_generator(comb, batch_size)):
         print(f"Pushing batch {i+1} with {len(batch)} combinations...")
         push_to_redis(batch)
