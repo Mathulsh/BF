@@ -12,16 +12,8 @@ from numpy import ndarray
 
 time_start = time.time()
 
-data: DataFrame = pickle.load(open("/Users/lishihong/projects/Research/HEA/acln/src/acln/data_43_cls.pkl", "rb"))
+data: DataFrame = pickle.load(open("/Users/lishihong/projects/Research/HEA/acln/src/acln/data_43_5cls.pkl", "rb"))
 y = data.values[:, -1]
-
-# ===== 3分类标签构造（回归连续值 ➡️ 分类标签）====
-# y_raw: ndarray = data.values[:, -1]
-# y = np.zeros_like(y_raw, dtype=float)
-# print(y_raw)
-# y[y_raw < 5] = 0
-# y[(y_raw >= 5) & (y_raw < 20)] = 1
-# y[y_raw >= 20] = 2
 
 # 验证阶段，9次就结束，实际跑的时候，需要while True
 i = 0
@@ -44,11 +36,11 @@ while True:
         X = data.loc[:, task].values
         # 构建流水线，防止全部归一化，造成数据泄漏
         pipe = Pipeline([
-            ('scaler', MinMaxScaler()),
+            # ('scaler', MinMaxScaler()),
             ('model', RandomForestClassifier(random_state=0, n_jobs=1)) # 尝试单核
         ])
         # 分层划分交叉验证
-        scoring_name = "recall_macro"
+        scoring_name = "f1_macro"
         cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
         cv_scores: ndarray = cross_val_score(pipe, X, y, cv=cv, scoring=scoring_name)
         # 训练结果推送到 Redis
@@ -61,5 +53,3 @@ while True:
         continue
 time_end = time.time()
 print(f"Time cost: {time_end - time_start}")
-
-# 四特征组合12w_mean_f1_macro-15节点耗时：7h

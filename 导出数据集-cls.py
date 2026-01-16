@@ -21,10 +21,43 @@ def continuous_to_3class(y: pd.Series) -> pd.Series:
     )
     return y_cls.astype(int)
 
+def continuous_to_4class(y: pd.Series) -> pd.Series:
+    """
+    将连续标签 y 转换为 4 分类：
+    0: y < 5
+    1: 5 <= y < 10
+    2: 10 <= y < 20
+    3: y >= 20
+    """
+    y_cls = pd.cut(
+        y,
+        bins=[-np.inf, 5, 10, 20, np.inf],
+        labels=[0, 1, 2, 3],
+        right=False
+    )
+    return y_cls.astype(int)
+
+def continuous_to_5class(y: pd.Series) -> pd.Series:
+    """
+    将连续标签 y 转换为 5 分类：
+    0: y < 5
+    1: 5 <= y < 10
+    2: 10 <= y < 20
+    3: 20 <= y < 30
+    4: y >= 30
+    """
+    y_cls = pd.cut(
+        y,
+        bins=[-np.inf, 5, 10, 20, 30, np.inf],
+        labels=[0, 1, 2, 3, 4],
+        right=False
+    )
+    return y_cls.astype(int)
+
 # ===============================
 # 2. 分层划分 + 归一化 + 导出
 # ===============================
-def export_stratified_3class_dataset(
+def export_stratified_class_dataset(
     X: pd.DataFrame,
     y_countinous: pd.Series,
     test_size: float = 0.2,
@@ -39,7 +72,7 @@ def export_stratified_3class_dataset(
     """
 
     # --- 连续 → 分类 ---
-    y_class = continuous_to_3class(y_countinous)
+    y_class = continuous_to_5class(y_countinous) # ⚠️可修改
 
     # --- 基本检查 ---
     print("分类标签分布：")
@@ -107,17 +140,17 @@ def export_stratified_3class_dataset(
 
 # X: pd.DataFrame
 # y: 连续值 pd.Series
-file_path = r'/Users/lishihong/projects/Research/HEA/98.csv'  # ========== 可变 ==========
+file_path = r'/Users/lishihong/projects/Research/HEA/43.csv'  # ========== 可变 ==========
 df = pd.read_csv(file_path)
 X: pd.DataFrame = df.iloc[:, :-1]
 y_countinous: pd.Series = pd.Series(df.iloc[:, -1])
 
-train_df, test_df = export_stratified_3class_dataset(
+train_df, test_df = export_stratified_class_dataset(
     X=X,
     y_countinous=y_countinous,
     test_size=0.2,
     random_state=42,
     export_full_dataset=True,
-    output_prefix="98",
+    output_prefix="43_5class",
     scaler_type="minmax",
 )
