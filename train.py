@@ -2,6 +2,7 @@
 import time
 import pickle
 import numpy as np
+import catboost as cb
 from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
 from sklearn.model_selection import cross_val_score, StratifiedKFold
 from sklearn.pipeline import Pipeline
