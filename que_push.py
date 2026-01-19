@@ -1,10 +1,10 @@
 '''推送数据到Redis的运行脚本'''
 from itertools import combinations, islice
-from acln.rd import push_to_redis # type: ignore
+from rd import push_to_redis # type: ignore
 import time, os
 # 按顺序生成组合
 whole_numbers: list[int] = list(range(1, 44)) # 1-68标准化后的特征列
-comb = combinations(whole_numbers, 4) 
+comb = combinations(whole_numbers, 5) 
 # 本机跑 
 # C(43,4) = 124,100(12w)
 # C(43,5) = 962,598(96w) 实际丢失了6824条
@@ -40,7 +40,7 @@ if __name__ == "__main__":
         print(f"Pushing batch {i+1} with {len(batch)} combinations...")
         push_to_redis(batch)
         print(f"Batch {i+1} completed")
-        if i == 12:
+        if i == 9:
             break
         
         # 查看所有batch

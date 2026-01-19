@@ -2,7 +2,7 @@
 import time
 import pickle
 import numpy as np
-import catboost as cb
+from catboost import CatBoostClassifier
 from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
 from sklearn.model_selection import cross_val_score, StratifiedKFold
 from sklearn.pipeline import Pipeline
@@ -13,7 +13,7 @@ from numpy import ndarray
 
 time_start = time.time()
 
-data: DataFrame = pickle.load(open("/Users/lishihong/projects/Research/HEA/BF/data_43_5cls.pkl", "rb"))
+data: DataFrame = pickle.load(open("/Users/lishihong/projects/Research/HEA/BF/data_43_3cls.pkl", "rb"))
 y = data.values[:, -1]
 
 # 验证阶段，9次就结束，实际跑的时候，需要while True
@@ -37,7 +37,7 @@ while True:
         # 构建流水线，防止全部归一化，造成数据泄漏
         pipe = Pipeline([
             # ('scaler', MinMaxScaler()),
-            ('model', RandomForestClassifier(random_state=0, n_jobs=1))
+            ('model', GradientBoostingClassifier(random_state=0))
         ])
         # 分层划分交叉验证
         scoring_name = "f1_macro"

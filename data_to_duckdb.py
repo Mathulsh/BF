@@ -1,4 +1,4 @@
-from acln.rd import redis_host, redis_port, redis_password, collect_redis_results_to_duckdb
+from rd import redis_host, redis_port, redis_password, collect_redis_results_to_duckdb
 import time
 
 time_start = time.time()

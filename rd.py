@@ -140,10 +140,10 @@ def collect_redis_results_to_duckdb(
     Redis item（pickle）:
     {
         "features": list[int],
-        "precision_macro": float
+        "f1_macro": float
     }
     """
-    score_name = "precision_macro" # ⚠️修改
+    score_name = "mean_f1_macro" # ⚠️修改 mean_f1_macro、precision_macro、recall_macro
     # Redis
     r = redis.Redis(
         host=redis_host,
