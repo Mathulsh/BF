@@ -4,7 +4,7 @@ from pandas import DataFrame
 from rd import push_to_redis
 
 # 连接db数据库
-con: duckdb.DuckDBPyConnection = duckdb.connect("/Users/lishihong/projects/Research/HEA/acln/src/acln/duckdb/GB/results_3cls_43x4-f1_macro.duckdb")
+con: duckdb.DuckDBPyConnection = duckdb.connect("/Users/lishihong/projects/Research/HEA/BF/results/duckdb/GB/results_43x4-train_f1.duckdb")
 
 # 统计表中记录数
 count = con.execute("SELECT COUNT(*) FROM results").fetchall()[0][0]
@@ -15,8 +15,8 @@ top10: DataFrame = con.sql("SELECT * FROM results ORDER BY mean_f1_macro DESC LI
 print("Top 10 records:", top10)
 
 # 合并两个 DuckDB 文件
-# con = duckdb.connect("results.duckdb")
-# con.execute("ATTACH 'results1.duckdb' AS db2")
+# con = duckdb.connect("results1.duckdb")
+# con.execute("ATTACH 'results.duckdb' AS db2")
 # con.execute("""
 #     INSERT INTO results
 #     SELECT * FROM db2.results
@@ -48,6 +48,6 @@ print("Top 10 records:", top10)
 #     tuple(map(int, row)) for row in missing_df["features"]
 # )
 
-# 查重
+# 查重操作再cli操作
 # df = con.execute("SELECT * FROM results").df()
 # dup_df = df[df.duplicated(subset=["features"], keep=False)] # 非常耗时，不建议使用

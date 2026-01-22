@@ -41,7 +41,10 @@ while True:
         ])
         # 分层划分交叉验证
         scoring_name = "f1_macro"
-        cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+        cv = list(StratifiedKFold(n_splits=5, shuffle=True, random_state=42
+                                  ).split(np.zeros(len(y)), y))
+
+        # cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
         cv_scores: ndarray = cross_val_score(pipe, X, y, cv=cv, scoring=scoring_name)
         # 训练结果推送到 Redis
         result_data: dict = {

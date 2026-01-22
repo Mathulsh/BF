@@ -55,36 +55,36 @@ def export_stratified_3class_dataset(
     )
 
     # --- 特征归一化（只 fit 训练集）---
-    if scaler_type == "minmax":
-        scaler = MinMaxScaler()
-    else:
-        raise ValueError("目前仅支持 minmax")
+    # if scaler_type == "minmax":
+    #     scaler = MinMaxScaler()
+    # else:
+    #     raise ValueError("目前仅支持 minmax")
 
-    X_train_scaled = pd.DataFrame(
-        scaler.fit_transform(X_train),
-        index=X_train.index,
-        columns=X_train.columns
-    )
+    # X_train_scaled = pd.DataFrame(
+    #     scaler.fit_transform(X_train),
+    #     index=X_train.index,
+    #     columns=X_train.columns
+    # )
 
-    X_test_scaled = pd.DataFrame(
-        scaler.transform(X_test),
-        index=X_test.index,
-        columns=X_test.columns
-    )
+    # X_test_scaled = pd.DataFrame(
+    #     scaler.transform(X_test),
+    #     index=X_test.index,
+    #     columns=X_test.columns
+    # )
 
     # --- 合并 X + y，方便导出 ---
-    train_df = X_train_scaled.copy()
+    train_df = X_train.copy()
     train_df["label"] = y_train
 
-    test_df = X_test_scaled.copy()
+    test_df = X_test.copy()
     test_df["label"] = y_test
 
     # --- 导出 ---
     train_path = f"{output_prefix}_train.csv"
     test_path = f"{output_prefix}_test.csv"
 
-    train_df.to_csv(train_path, index=True)
-    test_df.to_csv(test_path, index=True)
+    train_df.to_csv(train_path, index=False)
+    test_df.to_csv(test_path, index=False)
 
     print(f"\n导出完成：")
     print()
@@ -93,8 +93,7 @@ def export_stratified_3class_dataset(
 
     # --- 如果需要，导出完整数据集（不归一化）---
     if export_full_dataset:
-        # 创建完整的未归一化分类数据集
-        full_dataset_df = X.copy()  # 不再进行归一化处理
+        full_dataset_df = X.copy()
         full_dataset_df["label"] = y_class
         
         # 导出完整数据集
@@ -107,7 +106,7 @@ def export_stratified_3class_dataset(
 
 # X: pd.DataFrame
 # y: 连续值 pd.Series
-file_path = r'/Users/lishihong/projects/Research/HEA/98.csv'  # ========== 可变 ==========
+file_path = r'/Users/lishihong/projects/Research/HEA/68.csv'  # ========== 可变 ==========
 df = pd.read_csv(file_path)
 X: pd.DataFrame = df.iloc[:, :-1]
 y_countinous: pd.Series = pd.Series(df.iloc[:, -1])
@@ -118,6 +117,6 @@ train_df, test_df = export_stratified_3class_dataset(
     test_size=0.2,
     random_state=42,
     export_full_dataset=True,
-    output_prefix="98",
-    scaler_type="minmax",
+    output_prefix="68",
+    # scaler_type="minmax",
 )

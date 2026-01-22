@@ -5,9 +5,9 @@ from typing import Iterable, Tuple, List
 import pickle, time, duckdb
 from typing import Optional, cast
 
-redis_host: str = os.getenv("REDIS_HOST", "redis-17122.c8.us-east-1-4.ec2.cloud.redislabs.com")
-redis_port: int = int(os.getenv("REDIS_PORT", 17122))
-redis_password: str = os.getenv("REDIS_PASSWORD", "BQOmVL2fC0SfXCuO2NjJFvNriLAzbsp0")
+redis_host: str = os.getenv("REDIS_HOST", "redis-14236.c12.us-east-1-4.ec2.cloud.redislabs.com")
+redis_port: int = int(os.getenv("REDIS_PORT", 14236))
+redis_password: str = os.getenv("REDIS_PASSWORD", "muSvjzIvzkXC6na0p7jniAI6OCSf7aWs")
 
 def push_to_redis(combs: Iterable[tuple[int, ...]]):
     """
