@@ -4,7 +4,7 @@ from pandas import DataFrame
 from rd import push_to_redis
 
 # 连接db数据库
-con: duckdb.DuckDBPyConnection = duckdb.connect("/Users/lishihong/projects/Research/HEA/BF/results/duckdb/GB/results_43x4-train_f1.duckdb")
+con: duckdb.DuckDBPyConnection = duckdb.connect("/Users/lishihong/projects/Research/HEA/results.duckdb")
 
 # 统计表中记录数
 count = con.execute("SELECT COUNT(*) FROM results").fetchall()[0][0]
