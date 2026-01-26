@@ -1,7 +1,7 @@
 import duckdb
 import pandas as pd
 from pandas import DataFrame
-from rd import push_to_redis
+from rd3 import push_to_redis
 
 # 连接db数据库
 con: duckdb.DuckDBPyConnection = duckdb.connect("/Users/lishihong/projects/Research/HEA/results.duckdb")

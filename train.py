@@ -7,7 +7,7 @@ from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
 from sklearn.model_selection import cross_val_score, StratifiedKFold
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import MinMaxScaler
-from rd import read_one_from_redis, push_result_to_redis
+from rd3 import read_one_from_redis, push_result_to_redis
 from pandas import DataFrame
 from numpy import ndarray
 

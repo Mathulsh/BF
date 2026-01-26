@@ -3,7 +3,7 @@ from itertools import combinations, islice
 import signal
 import sys
 import os
-from rd import push_to_redis # type: ignore
+from rd3 import push_to_redis # type: ignore
 
 # 添加全局变量用于控制程序运行状态
 should_stop = False

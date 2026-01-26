@@ -1,6 +1,6 @@
 '''推送数据到Redis的运行脚本'''
 from itertools import combinations, islice
-from rd import push_to_redis # type: ignore
+from rd3 import push_to_redis # type: ignore
 import time, os
 # 按顺序生成组合
 whole_numbers: list[int] = list(range(1, 44)) # 1-68标准化后的特征列
