@@ -5,8 +5,8 @@ from typing import Iterable, Tuple, List
 import pickle, time, duckdb
 from typing import Optional, cast
 
-redis_host: str = "10.64.198.178"
-redis_port: int = int(os.getenv("REDIS_PORT", 6379))
+redis_host: str = "10.64.199.70"
+redis_port: int = 41528
 redis_password: str | None = None
 
 def push_to_redis(combs: Iterable[tuple[int, ...]]):
@@ -15,9 +15,10 @@ def push_to_redis(combs: Iterable[tuple[int, ...]]):
     :param combs: Iterable[tuple[int]]
     """
     r = redis.StrictRedis(
-        host="10.64.198.178",   # Redis 内网 IP
-        port=6379,
-        decode_responses=True,
+        host=redis_host,
+        port=redis_port,
+        password=redis_password,
+        decode_responses=False,
         socket_timeout=30,
         max_connections=1000,
     )
@@ -42,9 +43,10 @@ def read_one_from_redis() -> tuple[list[str] | None, bytes | None, Exception | N
     """
 
     r = redis.StrictRedis(
-        host="10.64.198.178",   # Redis 内网 IP
-        port=6379,
-        decode_responses=True,
+        host=redis_host,
+        port=redis_port,
+        password=redis_password,
+        decode_responses=False,
         socket_timeout=30,
         max_connections=1000,
     )
@@ -88,9 +90,10 @@ def push_result_to_redis(
         return
 
     r = redis.StrictRedis(
-        host="10.64.198.178",   # Redis 内网 IP
-        port=6379,
-        decode_responses=True,
+        host=redis_host,
+        port=redis_port,
+        password=redis_password,
+        decode_responses=False,
         socket_timeout=30,
         max_connections=1000,
     )
@@ -124,7 +127,7 @@ def collect_redis_results_to_duckdb(
     redis_host: str,
     redis_port: int,
     redis_password: Optional[str],
-    queue_name: str = "results",                 # ✅ 明确：只从 results 拉
+    queue_name: str = "results",
     processing_queue: str = "results:processing",
     duckdb_path: str = "results.duckdb",
     table_name: str = "results",
@@ -133,14 +136,9 @@ def collect_redis_results_to_duckdb(
 ):
     """
     从 Redis 的 results 队列拉取数据（不丢数据，高速版）
-    
-    Redis item（pickle）:
-    {
-        "features": list[int],
-        "f1_macro": float
-    }
     """
-    score_name = "mean_f1_macro" # ⚠️修改 mean_f1_macro、precision_macro、recall_macro
+    score_name = "mean_f1_macro"
+
     # Redis
     r = redis.Redis(
         host=redis_host,
@@ -158,17 +156,13 @@ def collect_redis_results_to_duckdb(
     )
     """)
 
-    # Lua：从 results → results:processing（原子、批量）
+    # Lua：results → results:processing（原子、批量）
     pop_script = r.register_script("""
     local res = {}
     local n = tonumber(ARGV[1])
 
     for i = 1, n do
-        local item = redis.call(
-            "RPOPLPUSH",
-            KEYS[1],   -- results
-            KEYS[2]    -- results:processing
-        )
+        local item = redis.call("RPOPLPUSH", KEYS[1], KEYS[2])
         if not item then
             break
         end
@@ -179,6 +173,8 @@ def collect_redis_results_to_duckdb(
     """)
 
     total_count = 0
+    last_print = 0
+
     while True:
         # 1️⃣ 原子批量拉取
         items = cast(list, pop_script(
@@ -186,13 +182,8 @@ def collect_redis_results_to_duckdb(
             args=[batch_size]
         ))
 
+        # ================= 队列暂时为空 =================
         if not items:
-            time.sleep(sleep_time)
-            continue
-        
-        # ================= 拉取为空 =================
-        if not items:
-            # 🔍 判断是否真的“拉取完”
             remaining = r.llen(queue_name)
             processing = r.llen(processing_queue)
 
@@ -201,11 +192,10 @@ def collect_redis_results_to_duckdb(
                 print(f"📊 本次共写入 DuckDB 数据量：{total_count}")
                 break
 
-            # 仍可能有生产者或处理中数据
             time.sleep(sleep_time)
             continue
-        
-         # ================= 反序列化 =================
+
+        # ================= 反序列化 =================
         buffer = []
         for item in items:
             data = pickle.loads(item)
@@ -214,28 +204,25 @@ def collect_redis_results_to_duckdb(
                 float(data[score_name]),
             ))
 
-        # 2️⃣ 写 DuckDB（事务）
-        try:
-            con.executemany(
-                f"INSERT INTO {table_name} VALUES (?, ?)",
-                buffer
-            )
-        except Exception:
-            # ❌ 写失败：不 ACK，数据仍在 processing_queue
-            raise
-        
-        # ✅ 成功写入 → 累计条数
+        # 2️⃣ 写 DuckDB
+        con.executemany(
+            f"INSERT INTO {table_name} VALUES (?, ?)",
+            buffer
+        )
+
         batch_count = len(buffer)
         total_count += batch_count
-        
-        # 3️⃣ ACK：确认成功后，从 processing 删除
+
+        # 3️⃣ ACK：从 processing 删除
         pipe = r.pipeline()
         for item in items:
             pipe.lrem(processing_queue, 1, item)
         pipe.execute()
-        
-        # （可选）实时进度
-        print(f"已写入 {total_count} 条数据到 DuckDB")
+
+        # ================= 进度显示（低频，不拖慢） =================
+        if total_count - last_print >= 50_000:
+            print(f"🚀 已累计写入 {total_count:,} 条数据")
+            last_print = total_count
         
 def collect_redis_results_to_duckdb1(
     *,
