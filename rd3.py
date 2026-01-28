@@ -152,8 +152,8 @@ def collect_redis_results_to_duckdb(
     # ========== DuckDB ==========
     con = duckdb.connect(duckdb_path)
     # 关闭 fsync
-    con.execute("PRAGMA disable_fsync=true;")
-    con.execute("PRAGMA journal_mode=wal;")
+    con.execute("PRAGMA filesystems=true;")
+    con.execute("PRAGMA username=wal;")
 
     con.execute(f"""
     CREATE TABLE IF NOT EXISTS {table_name} (
