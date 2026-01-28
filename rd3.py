@@ -158,9 +158,6 @@ def collect_redis_results_to_duckdb(
     )
     """)
 
-    # 显式事务批量写入
-    con.execute("BEGIN;")
-    con.execute("COMMIT;")
     # ========== Lua：队头批量拉取 ==========
     pop_script = r.register_script("""
     local res = {}
