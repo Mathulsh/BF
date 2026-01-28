@@ -151,8 +151,7 @@ def collect_redis_results_to_duckdb(
 
     # ========== DuckDB ==========
     con = duckdb.connect(duckdb_path)
-
-    # 🔥 关键：关闭 fsync（Docker / 云盘必备）
+    # 关闭 fsync
     con.execute("PRAGMA disable_fsync=true;")
     con.execute("PRAGMA journal_mode=wal;")
 
@@ -162,7 +161,6 @@ def collect_redis_results_to_duckdb(
         {score_name} DOUBLE
     )
     """)
-
     # 显式事务
     con.execute("BEGIN;")
 
@@ -173,9 +171,9 @@ def collect_redis_results_to_duckdb(
 
     for i = 1, n do
         local item = redis.call(
-            "LPOPRPUSH",
-            KEYS[1],   -- results (队头)
-            KEYS[2]    -- results:processing (队尾)
+            "RPOPLPUSH",
+            KEYS[1],   -- results
+            KEYS[2]    -- results:processing
         )
         if not item then
             break
