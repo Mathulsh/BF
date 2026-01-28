@@ -151,10 +151,6 @@ def collect_redis_results_to_duckdb(
 
     # ========== DuckDB ==========
     con = duckdb.connect(duckdb_path)
-    # 关闭 fsync
-    con.execute("PRAGMA filesystems=true;")
-    con.execute("PRAGMA username=wal;")
-
     con.execute(f"""
     CREATE TABLE IF NOT EXISTS {table_name} (
         features INTEGER[],
@@ -163,7 +159,8 @@ def collect_redis_results_to_duckdb(
     """)
     # 显式事务
     con.execute("BEGIN;")
-
+    con.execute("COMMIT;")
+    
     # ========== Lua：队头批量拉取 ==========
     pop_script = r.register_script("""
     local res = {}
