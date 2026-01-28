@@ -157,10 +157,11 @@ def collect_redis_results_to_duckdb(
         {score_name} DOUBLE
     )
     """)
-    # 显式事务
+    # WAL 提高事务安全性
+    con.execute("PRAGMA username=wal;")
+    # 显式事务批量写入
     con.execute("BEGIN;")
     con.execute("COMMIT;")
-    con.execute("CHECKPOINT;")
     # ========== Lua：队头批量拉取 ==========
     pop_script = r.register_script("""
     local res = {}
