@@ -71,7 +71,7 @@ def train_models():
     print("Starting training process...")
     time_start = time.time()
 
-    data: DataFrame = pickle.load(open("/Users/lishihong/projects/Research/HEA/BF/data_43_3cls_train.pkl", "rb"))
+    data: DataFrame = pickle.load(open("/workspace/userdata/BF/data_43_3cls_train.pkl", "rb"))
     y = data.values[:, -1]
 
     # 验证阶段，9次就结束，实际跑的时候，需要while True
