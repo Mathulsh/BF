@@ -1,7 +1,6 @@
 '''功能函数:redis读写模块'''
-import os
 import redis
-from typing import Iterable, Tuple, List
+from typing import Iterable
 import pickle, time, duckdb
 from typing import Optional, cast
 
@@ -133,13 +132,16 @@ def collect_redis_results_to_duckdb(
     table_name: str = "results",
     batch_size: int = 5000,
     sleep_time: float = 0.01,
+    commit_every: int = 10,          # ✅ 每 N 个 batch 提交一次
 ):
     """
-    从 Redis 的 results 队列拉取数据（不丢数据，高速版）
+    Redis(results) -> DuckDB
+    FIFO / 批量 / 原子 / 可恢复
     """
+
     score_name = "mean_f1_macro"
 
-    # Redis
+    # ========== Redis ==========
     r = redis.Redis(
         host=redis_host,
         port=redis_port,
@@ -147,8 +149,13 @@ def collect_redis_results_to_duckdb(
         decode_responses=False
     )
 
-    # DuckDB
+    # ========== DuckDB ==========
     con = duckdb.connect(duckdb_path)
+
+    # 🔥 关键：关闭 fsync（Docker / 云盘必备）
+    con.execute("PRAGMA disable_fsync=true;")
+    con.execute("PRAGMA journal_mode=wal;")
+
     con.execute(f"""
     CREATE TABLE IF NOT EXISTS {table_name} (
         features INTEGER[],
@@ -156,13 +163,20 @@ def collect_redis_results_to_duckdb(
     )
     """)
 
-    # Lua：results → results:processing（原子、批量）
+    # 显式事务
+    con.execute("BEGIN;")
+
+    # ========== Lua：队头批量拉取 ==========
     pop_script = r.register_script("""
     local res = {}
     local n = tonumber(ARGV[1])
 
     for i = 1, n do
-        local item = redis.call("RPOPLPUSH", KEYS[1], KEYS[2])
+        local item = redis.call(
+            "LPOPRPUSH",
+            KEYS[1],   -- results (队头)
+            KEYS[2]    -- results:processing (队尾)
+        )
         if not item then
             break
         end
@@ -173,29 +187,31 @@ def collect_redis_results_to_duckdb(
     """)
 
     total_count = 0
-    last_print = 0
+    batch_counter = 0
 
     while True:
-        # 1️⃣ 原子批量拉取
-        items = cast(list, pop_script(
+        # ---------- 1️⃣ 批量拉取 ----------
+        items = pop_script(
             keys=[queue_name, processing_queue],
             args=[batch_size]
-        ))
+        )
 
-        # ================= 队列暂时为空 =================
+        # ---------- 队列暂时为空 ----------
         if not items:
             remaining = r.llen(queue_name)
             processing = r.llen(processing_queue)
 
             if remaining == 0 and processing == 0:
+                # 最后一次提交
+                con.execute("COMMIT;")
                 print("✅ Redis 队列已清空，数据拉取完成")
-                print(f"📊 本次共写入 DuckDB 数据量：{total_count}")
+                print(f"📊 共写入 DuckDB：{total_count} 条")
                 break
 
             time.sleep(sleep_time)
             continue
 
-        # ================= 反序列化 =================
+        # ---------- 2️⃣ 反序列化 ----------
         buffer = []
         for item in items:
             data = pickle.loads(item)
@@ -204,7 +220,7 @@ def collect_redis_results_to_duckdb(
                 float(data[score_name]),
             ))
 
-        # 2️⃣ 写 DuckDB
+        # ---------- 3️⃣ 写 DuckDB ----------
         con.executemany(
             f"INSERT INTO {table_name} VALUES (?, ?)",
             buffer
@@ -212,17 +228,22 @@ def collect_redis_results_to_duckdb(
 
         batch_count = len(buffer)
         total_count += batch_count
+        batch_counter += 1
 
-        # 3️⃣ ACK：从 processing 删除
+        # ---------- 4️⃣ ACK ----------
         pipe = r.pipeline()
         for item in items:
             pipe.lrem(processing_queue, 1, item)
         pipe.execute()
 
-        # ================= 进度显示（低频，不拖慢） =================
-        if total_count - last_print >= 50_000:
-            print(f"🚀 已累计写入 {total_count:,} 条数据")
-            last_print = total_count
+        # ---------- 5️⃣ 低频 commit ----------
+        if batch_counter % commit_every == 0:
+            con.execute("COMMIT;")
+            con.execute("BEGIN;")
+
+        # ---------- 进度 ----------
+        if total_count % 10_000 == 0:
+            print(f"🚀 已写入 {total_count:,} 条")
         
 def collect_redis_results_to_duckdb1(
     *,

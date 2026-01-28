@@ -2,17 +2,10 @@
 from itertools import combinations, islice
 from rd3 import push_to_redis # type: ignore
 import time, os
-# 按顺序生成组合
-whole_numbers: list[int] = list(range(1, 44)) # 1-68标准化后的特征列
-comb = combinations(whole_numbers, 4) 
-# 本机跑 
-# C(43,4) = 124,100(12w)
-# C(43,5) = 962,598(96w) 实际丢失了6824条
-# C(68,4) = 814,385种组合(81w)
-# 上集群跑
-# C(68,5) = 10,424,128种组合(1000w)
-# C(98,4) = 3,612,280种组合(360w)
-# C(98,5) = 67,910,864种组合(6800w)
+# 按顺序生成特征组合
+whole_numbers: list[int] = list(range(1, 44))
+comb = combinations(whole_numbers, 4)
+
 def batch_generator(iterable, batch_size):
     """分割可迭代对象为指定大小的批次避免内存溢出"""
     iterator = iter(iterable)
@@ -24,8 +17,9 @@ def batch_generator(iterable, batch_size):
         yield batch # 惰性生成器节省内存
 
 if __name__ == "__main__":
-    # time_start = time.time()
-    # 检查是否已运行过
+    time_start = time.time()
+
+    # 检查是否运行中断过
     flag_file = "push_progress.txt"
     if os.path.exists(flag_file):
         print("检测到推送已在进行中或已完成，退出程序。")
@@ -43,14 +37,19 @@ if __name__ == "__main__":
         if i == 9:
             break
         
-        # 查看所有batch
-        # batches = peek_all_batches()
-        # print(f"总batch数量: {len(batches)}")
-        
-        # 删除标记文件
+    # 删除中断检验文件
     if os.path.exists(flag_file):
         os.remove(flag_file)
     print("All combinations have been pushed to Redis!")
     
-    # time_end = time.time()
-    # print(f"Time cost: {time_end - time_start} seconds")
+    time_end = time.time()
+    print(f"Time cost: {time_end - time_start} seconds")
+
+# 本机跑 
+# C(43,4) = 124,100(12w)
+# C(43,5) = 962,598(96w) 实际丢失了6824条
+# C(68,4) = 814,385种组合(81w)
+# 上集群跑
+# C(68,5) = 10,424,128种组合(1000w)
+# C(98,4) = 3,612,280种组合(360w)
+# C(98,5) = 67,910,864种组合(6800w)

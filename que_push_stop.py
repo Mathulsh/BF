@@ -1,4 +1,4 @@
-'''推送数据到Redis的运行脚本'''
+'''本机推送数据到Redis的运行脚，redis内存受限时使用'''
 from itertools import combinations, islice
 import signal
 import sys
