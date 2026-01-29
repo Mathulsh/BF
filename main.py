@@ -1,4 +1,5 @@
-"""结合que_push.py, train.py & data_to_duckdb.py写成一个main.py主运行脚本"""
+"""结合que_push.py, train.py & data_to_duckdb.py写成一个main.py主运行脚本
+潜在风险：redis中任务堆积过多，内存溢出(超1TB时)"""
 import time
 import pickle
 import numpy as np
@@ -31,13 +32,19 @@ def batch_generator(iterable, batch_size):
         yield batch  # 惰性生成器节省内存
 def push_combinations_to_redis():
     """推送数据到Redis的运行脚本"""
+    # 检查是否已经完成过推送
+    completed_flag_file = "push_completed.txt"
+    if os.path.exists(completed_flag_file):
+        print("检测到推送已完成，跳过推送步骤。")
+        return
+    
     print("Starting to push combinations to Redis...")
     time_start = time.time()
 
     # 检查是否运行中断过
     flag_file = "push_progress.txt"
     if os.path.exists(flag_file):
-        print("检测到推送已在进行中或已完成，退出程序。")
+        print("检测到推送已在进行中，退出程序。")
         return
 
     # 创建标记文件
@@ -45,8 +52,8 @@ def push_combinations_to_redis():
         f.write("started")
 
     # 按顺序生成特征组合
-    whole_numbers: list[int] = list(range(1, 44)) # 总特征数 98?
-    comb = combinations(whole_numbers, 4) # 特征数 4-10?
+    whole_numbers: list[int] = list(range(1, 44))
+    comb = combinations(whole_numbers, 4)
 
     batch_size = 100000  # 每批处理数据量
     for i, batch in enumerate(batch_generator(comb, batch_size)):
@@ -57,14 +64,19 @@ def push_combinations_to_redis():
         # if i == 9:
         #     break
 
-    # 删除中断检验文件
+    # 删除进度标记文件
     if os.path.exists(flag_file):
         os.remove(flag_file)
+    
+    # 创建完成标记文件
+    with open(completed_flag_file, "w") as f:
+        f.write("completed")
+        
     print("All combinations have been pushed to Redis!")
-
+    print("Created completion marker file to skip this step on future runs.")
+    
     time_end = time.time()
     print(f"Time cost for pushing to Redis: {time_end - time_start} seconds")
-
 # ② 对应train.py
 def train_models():
     """训练所有结果的运行脚本"""
@@ -145,3 +157,4 @@ def main():
     collect_results_to_duckdb()
 if __name__ == "__main__":
     main()
+
