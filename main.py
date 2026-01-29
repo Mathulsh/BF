@@ -3,13 +3,15 @@
 import time
 import pickle
 import numpy as np
+import os
+import signal
 from itertools import combinations, islice
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import cross_val_score, StratifiedKFold
 from sklearn.pipeline import Pipeline
 from pandas import DataFrame
 from numpy import ndarray
-import os
+
 from rd3 import (
     push_to_redis, 
     read_one_from_redis, 
@@ -19,8 +21,22 @@ from rd3 import (
     redis_password, 
     collect_redis_results_to_duckdb
 )
+# ① 对应que_push.py
+# 添加全局变量用于控制程序运行状态
+should_stop = False
+current_batch_num = 0  # 记录当前处理的批次号
 
-# ① 对应data_to_duckdb.py
+def signal_handler(signum, frame):
+    """处理中断信号"""
+    global should_stop, current_batch_num
+    print(f"\n收到中断信号，正在保存进度...")
+    print(f"批次 {current_batch_num} 未完成，进度已保存")
+    should_stop = True
+
+# 注册信号处理器
+signal.signal(signal.SIGINT, signal_handler)
+signal.signal(signal.SIGTERM, signal_handler)
+
 def batch_generator(iterable, batch_size):
     """分割可迭代对象为指定大小的批次避免内存溢出"""
     iterator = iter(iterable)
@@ -30,6 +46,7 @@ def batch_generator(iterable, batch_size):
         if not batch:
             break
         yield batch  # 惰性生成器节省内存
+
 def push_combinations_to_redis():
     """推送数据到Redis的运行脚本"""
     # 检查是否已经完成过推送
@@ -83,6 +100,15 @@ def push_combinations_to_redis():
             current_index += 1
     
     for i, batch in batch_generator_with_start(comb, batch_size, start_batch_index):
+        # 检查是否收到中断信号
+        if should_stop:
+            print(f"程序被中断，批次 {i + 1} 未完成，进度已保存")
+            # 保存当前进度（但不加1，因为当前批次未完成）
+            with open(progress_file, 'w') as f:
+                f.write(str(i))
+            sys.exit(0)
+                
+        current_batch_num = i + 1  # 更新当前处理的批次号
         print(f"Pushing batch {i + 1} with {len(batch)} combinations...")
         push_to_redis(batch)
         print(f"Batch {i + 1} completed")
