@@ -41,32 +41,57 @@ def push_combinations_to_redis():
     print("Starting to push combinations to Redis...")
     time_start = time.time()
 
-    # 检查是否运行中断过
-    flag_file = "push_progress.txt"
-    if os.path.exists(flag_file):
-        print("检测到推送已在进行中，退出程序。")
-        return
-
-    # 创建标记文件
-    with open(flag_file, "w") as f:
-        f.write("started")
+    # 获取上次处理的批次索引，用于断点续传
+    progress_file = "push_progress.txt"
+    start_batch_index = 0
+    if os.path.exists(progress_file):
+        with open(progress_file, 'r') as f:
+            try:
+                start_batch_index = int(f.read().strip())
+                print(f"检测到上次推送未完成，从第 {start_batch_index + 1} 批次开始继续...")
+            except ValueError:
+                start_batch_index = 0
+    else:
+        print("开始新的推送任务...")
 
     # 按顺序生成特征组合
     whole_numbers: list[int] = list(range(1, 44))
     comb = combinations(whole_numbers, 4)
-
     batch_size = 100000  # 每批处理数据量
-    for i, batch in enumerate(batch_generator(comb, batch_size)):
+    # 创建批次生成器，从指定索引开始
+    def batch_generator_with_start(iterable, batch_size, start_index=0):
+        """分割可迭代对象为指定大小的批次，支持从指定索引开始"""
+        iterator = iter(iterable)
+        # 跳过已处理的批次
+        for _ in range(start_index):
+            batch = list(islice(iterator, batch_size))
+            if not batch:
+                break
+        current_index = start_index
+        while True:
+            batch = list(islice(iterator, batch_size))  # 获取最多batch_size个元素迭代器
+            # 批次为空则结束循环
+            if not batch:
+                break
+            yield current_index, batch  # 同时返回索引和批次数据
+            current_index += 1
+    # 推送批次到Redis
+    for i, batch in batch_generator_with_start(comb, batch_size, start_batch_index):
         print(f"Pushing batch {i + 1} with {len(batch)} combinations...")
         push_to_redis(batch)
         print(f"Batch {i + 1} completed")
+        
+        # 保存当前进度
+        with open(progress_file, 'w') as f:
+            f.write(str(i + 1))
+        
         # Uncomment the next line to limit batches during testing
         # if i == 9:
         #     break
 
-    # 删除进度标记文件
-    if os.path.exists(flag_file):
-        os.remove(flag_file)
+    # 推送完成，删除进度文件
+    if os.path.exists(progress_file):
+        os.remove(progress_file)
     
     # 创建完成标记文件
     with open(completed_flag_file, "w") as f:
@@ -77,6 +102,7 @@ def push_combinations_to_redis():
     
     time_end = time.time()
     print(f"Time cost for pushing to Redis: {time_end - time_start} seconds")
+    
 # ② 对应train.py
 def train_models():
     """训练所有结果的运行脚本"""
