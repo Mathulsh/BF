@@ -51,13 +51,18 @@ def push_combinations_to_redis():
                 print(f"检测到上次推送未完成，从第 {start_batch_index + 1} 批次开始继续...")
             except ValueError:
                 start_batch_index = 0
+                print("进度文件格式错误，重新开始...")
     else:
         print("开始新的推送任务...")
+        # 开始新任务时创建进度文件，初始值为0（表示尚未完成任何批次）
+        with open(progress_file, 'w') as f:
+            f.write('0')
 
     # 按顺序生成特征组合
     whole_numbers: list[int] = list(range(1, 44))
     comb = combinations(whole_numbers, 4)
     batch_size = 100000  # 每批处理数据量
+    
     # 创建批次生成器，从指定索引开始
     def batch_generator_with_start(iterable, batch_size, start_index=0):
         """分割可迭代对象为指定大小的批次，支持从指定索引开始"""
@@ -67,6 +72,7 @@ def push_combinations_to_redis():
             batch = list(islice(iterator, batch_size))
             if not batch:
                 break
+
         current_index = start_index
         while True:
             batch = list(islice(iterator, batch_size))  # 获取最多batch_size个元素迭代器
@@ -75,6 +81,7 @@ def push_combinations_to_redis():
                 break
             yield current_index, batch  # 同时返回索引和批次数据
             current_index += 1
+            
     # 推送批次到Redis
     for i, batch in batch_generator_with_start(comb, batch_size, start_batch_index):
         print(f"Pushing batch {i + 1} with {len(batch)} combinations...")
