@@ -41,38 +41,38 @@ def push_combinations_to_redis():
     print("Starting to push combinations to Redis...")
     time_start = time.time()
 
-    # 获取上次处理的批次索引，用于断点续传
+    # 检测是否有未完成的推送，如果有就从其+1批次开始
     progress_file = "push_progress.txt"
     start_batch_index = 0
     if os.path.exists(progress_file):
         with open(progress_file, 'r') as f:
             try:
-                start_batch_index = int(f.read().strip())
-                print(f"检测到上次推送未完成，从第 {start_batch_index + 1} 批次开始继续...")
+                last_completed_batch = int(f.read().strip())
+                start_batch_index = last_completed_batch  # 从上次完成的批次号开始
+                print(f"检测到上次推送进度，从第 {start_batch_index + 1} 批次开始推送...")
             except ValueError:
                 start_batch_index = 0
                 print("进度文件格式错误，重新开始...")
     else:
         print("开始新的推送任务...")
-        # 开始新任务时创建进度文件，初始值为0（表示尚未完成任何批次）
-        with open(progress_file, 'w') as f:
-            f.write('0')
 
     # 按顺序生成特征组合
     whole_numbers: list[int] = list(range(1, 44))
     comb = combinations(whole_numbers, 4)
-    batch_size = 100000  # 每批处理数据量
+
+    batch_size = 10000  # 每批处理数据量
     
     # 创建批次生成器，从指定索引开始
     def batch_generator_with_start(iterable, batch_size, start_index=0):
         """分割可迭代对象为指定大小的批次，支持从指定索引开始"""
         iterator = iter(iterable)
+        
         # 跳过已处理的批次
         for _ in range(start_index):
             batch = list(islice(iterator, batch_size))
             if not batch:
                 break
-
+        
         current_index = start_index
         while True:
             batch = list(islice(iterator, batch_size))  # 获取最多batch_size个元素迭代器
@@ -81,14 +81,13 @@ def push_combinations_to_redis():
                 break
             yield current_index, batch  # 同时返回索引和批次数据
             current_index += 1
-            
-    # 推送批次到Redis
+    
     for i, batch in batch_generator_with_start(comb, batch_size, start_batch_index):
         print(f"Pushing batch {i + 1} with {len(batch)} combinations...")
         push_to_redis(batch)
         print(f"Batch {i + 1} completed")
         
-        # 保存当前进度
+        # 保存当前进度（保存已完成的批次号）
         with open(progress_file, 'w') as f:
             f.write(str(i + 1))
         
@@ -108,8 +107,7 @@ def push_combinations_to_redis():
     print("Created completion marker file to skip this step on future runs.")
     
     time_end = time.time()
-    print(f"Time cost for pushing to Redis: {time_end - time_start} seconds")
-    
+    print(f"Time cost for pushing to Redis: {time_end - time_start} seconds")    
 # ② 对应train.py
 def train_models():
     """训练所有结果的运行脚本"""
