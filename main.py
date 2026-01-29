@@ -4,6 +4,7 @@ import time
 import pickle
 import numpy as np
 import os
+import sys
 import signal
 from itertools import combinations, islice
 from sklearn.ensemble import RandomForestClassifier
@@ -30,7 +31,6 @@ def signal_handler(signum, frame):
     """处理中断信号"""
     global should_stop, current_batch_num
     print(f"\n收到中断信号，正在保存进度...")
-    print(f"批次 {current_batch_num} 未完成，进度已保存")
     should_stop = True
 
 # 注册信号处理器
