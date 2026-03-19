@@ -7,19 +7,18 @@ import os
 import sys
 import signal
 from itertools import combinations, islice
-from sklearn.ensemble import RandomForestClassifier
+from multiprocessing import Process
+from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier, ExtraTreesClassifier
 from sklearn.model_selection import cross_val_score, StratifiedKFold
 from sklearn.pipeline import Pipeline
-from pandas import DataFrame
-from numpy import ndarray
-
 from rd3 import (
     push_to_redis, 
     read_one_from_redis, 
     push_result_to_redis,
-    redis_host, 
-    redis_port, 
-    redis_password, 
+    # redis_host, 
+    # redis_port, 
+    # redis_password,
+    redis_list, 
     collect_redis_results_to_duckdb
 )
 # ① 对应que_push.py
@@ -134,84 +133,110 @@ def push_combinations_to_redis():
     
     time_end = time.time()
     print(f"Time cost for pushing to Redis: {time_end - time_start} seconds")    
+    
 # ② 对应train.py
 def train_models():
-    """训练所有结果的运行脚本"""
     print("Starting training process...")
-    time_start = time.time()
 
-    data: DataFrame = pickle.load(open("/workspace/userdata/BF/data_43_3cls_train.pkl", "rb"))
+    data = pickle.load(open("data_43_3cls_train.pkl", "rb"))
     y = data.values[:, -1]
 
-    # 验证阶段，9次就结束，实际跑的时候，需要while True
-    i = 0
     while True:
-        # i += 1
-        # if i == 6:
-        #     break
-        task: list[str] | None
-        raw_task: bytes | None
-        err: Exception | None
-        task, raw_task, err = read_one_from_redis()
-        print(task, err)
+        tasks, raw_task, err, source_redis = read_one_from_redis() # type: ignore
+
         if err is not None:
-            break
-        if task is None or raw_task is None:
-            # no task retrieved; stop processing
-            break
-        try:
-            X = data.loc[:, task].values
-            # 构建流水线，防止全部归一化，造成数据泄漏
-            pipe = Pipeline([
-                # ('scaler', MinMaxScaler()),
-                ('model', RandomForestClassifier(random_state=0))
-            ])
-            # 分层划分交叉验证
-            scoring_name = "f1_macro"
-            cv = list(StratifiedKFold(n_splits=5, shuffle=True, random_state=42
-                                      ).split(np.zeros(len(y)), y))
+            print("Redis error:", err)
+            continue   # ❗不要退出
+        if source_redis is None:
+            continue   # ✅ 消除 Pylance 报错
+        if tasks is None or raw_task is None:
+            continue   # ❗等待任务
 
-            # cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
-            cv_scores: ndarray = cross_val_score(pipe, X, y, cv=cv, scoring=scoring_name)
-            # 训练结果推送到 Redis
-            result_data: dict = {
-                "features": task,
-                "mean_f1_macro": float(cv_scores.mean().round(2)),  # 不mean，尝试1000条，db算均值
-            }
-            push_result_to_redis(result_data=result_data, raw_task=raw_task)
-        except Exception as e:
-            print(f"Error during training: {e}")
-            continue
+        for task in tasks:
+            try:
+                X = data.loc[:, task].values
 
-    time_end = time.time()
-    print(f"Time cost for training: {time_end - time_start}")
+                pipe = Pipeline([
+                    ('model', RandomForestClassifier(random_state=0))
+                ])
 
+                cv = list(StratifiedKFold(
+                    n_splits=5, shuffle=True, random_state=42
+                ).split(np.zeros(len(y)), y))
+
+                scores = cross_val_score(
+                    pipe, X, y, cv=cv, scoring="f1_macro"
+                )
+
+                result_data = {
+                    "features": task,
+                    "mean_f1_macro": float(scores.mean().round(2)),
+                }
+
+                # ✅ 写结果 + ACK（必须同一个 Redis）
+                push_result_to_redis(
+                    r=source_redis, # type: ignore
+                    result_data=result_data,
+                    raw_task=raw_task # type: ignore
+                )
+
+            except Exception as e:
+                print("Training error:", e)
+
+                # ❗ 防止死循环（必须 ACK）
+                source_redis.lrem("mylist:processing", 1, raw_task) # type: ignore
+                continue
+            print("task:", task, "Mean F1-macro:", scores.mean().round(2))
+        
 # ③ 对应data_to_duckdb.py
 def collect_results_to_duckdb():
     """Collect results from Redis and save to DuckDB"""
     print("Starting to collect results to DuckDB...")
     collect_redis_results_to_duckdb(
-        redis_host=redis_host,
-        redis_port=redis_port,
-        redis_password=redis_password,
+        redis_list=redis_list,
         queue_name="results",
         duckdb_path="results.duckdb",
-        table_name="results"
+        table_name="results",
+        batch_size=10000,
+        sleep_time=0.01,
+        commit_every=10,
     )
 
 # ④ 主运行脚本
 def main():
     """Main function to orchestrate all processes"""
     print("let's go BF!")
-    
+    time_start = time.time()
+    # ---------- worker 数 ----------
+    num_workers = 1
+    if len(sys.argv) > 1:
+        try:
+            num_workers = int(sys.argv[1])
+        except ValueError:
+            pass
+    print(f"启动 {num_workers} 个 worker")
+
     # Step 1: Push combinations to Redis
     push_combinations_to_redis()
     
-    # Step 2: Train models using the combinations
-    train_models()
+    # Step 2: Train models using n workers
+    workers = []
+
+    for i in range(num_workers):
+        p = Process(target=train_models, args=())
+        p.start()
+        workers.append(p)
+        print(f"Worker {i} started, pid={p.pid}")
+
+    time_end = time.time()
+    print(f"Time cost for training: {time_end - time_start} seconds")
+    # ---------- 等待所有 worker ----------
+    for p in workers:
+        p.join()
     
     # Step 3: Collect results to DuckDB
     collect_results_to_duckdb()
+    
 if __name__ == "__main__":
     main()
 

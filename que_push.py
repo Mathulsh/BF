@@ -4,7 +4,7 @@ from rd3 import push_to_redis # type: ignore
 import time, os
 # 按顺序生成特征组合
 whole_numbers: list[int] = list(range(1, 44))
-comb = combinations(whole_numbers, 4)
+comb = combinations(whole_numbers, 5)
 
 def batch_generator(iterable, batch_size):
     """分割可迭代对象为指定大小的批次避免内存溢出"""
