@@ -1,5 +1,5 @@
 '''功能函数:redis读写模块'''
-import redis, random
+import redis, pandas as pd
 import pickle, time, duckdb
 
 # redis_host: str = "10.64.199.70"
@@ -112,133 +112,73 @@ def push_result_to_redis(
     pipe.execute()
     
 def collect_redis_results_to_duckdb(
-    redis_list,
-    queue_name="results",
-    processing_queue="results:processing",
+    redis_list, 
     duckdb_path="results.duckdb",
-    table_name="results",
-    batch_size=5000,
-    sleep_time=0.01,
-    commit_every=2,
-):
-    score_name = "mean_f1_macro"
-
-    # ---------- DuckDB ----------
+    ):
     con = duckdb.connect(duckdb_path)
-    con.execute(f"""
-    CREATE TABLE IF NOT EXISTS {table_name} (
-        features INTEGER[],
-        {score_name} DOUBLE
-    )
+
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS results (
+            features INTEGER[],
+            mean_f1_macro DOUBLE
+        )
     """)
 
+    print("🚀 Fast collector started")
     total_count = 0
-    batch_counter = 0
-
-    print("🚀 Collector started (industrial version)")
-
+    empty_rounds = 0
+    
     while True:
-        any_data = False
+            any_data = False
 
-        # ⚡ 打乱 Redis 顺序（避免热点）
-        random.shuffle(redis_list)
-
-        for r in redis_list:
-            buffer = []
-            raw_items = []
-
-            # ---------- 1️⃣ 原子消费 ----------
-            for _ in range(batch_size):
-                item = r.rpoplpush(queue_name, processing_queue)
-                if item is None:
-                    break
-                raw_items.append(item)
-
-            if not raw_items:
-                continue
-
-            any_data = True
-
-            # ---------- 2️⃣ 解析 ----------
-            for item in raw_items:
-                try:
-                    data = pickle.loads(item)
-
-                    if isinstance(data, list):
-                        for d in data:
-                            buffer.append((
-                                d["features"],
-                                float(d[score_name])
-                            ))
-                    else:
-                        buffer.append((
-                            data["features"],
-                            float(data[score_name])
-                        ))
-                except Exception as e:
-                    # ❗ 坏数据直接丢弃，避免卡死
-                    print(f"⚠️ 反序列化失败: {e}")
-                    r.lrem(processing_queue, 1, item)
-
-            # ---------- 3️⃣ 写入 DuckDB ----------
-            if buffer:
-                con.executemany(
-                    f"INSERT INTO {table_name} VALUES (?, ?)",
-                    buffer
-                )
-
-                batch_count = len(buffer)
-                total_count += batch_count
-                batch_counter += 1
-
-            # ---------- 4️⃣ ACK（成功才删） ----------
-            pipe = r.pipeline()
-            for item in raw_items:
-                pipe.lrem(processing_queue, 1, item)
-            pipe.execute()
-
-        # ---------- 空队列检测 ----------
-        if not any_data:
-            all_empty = True
             for r in redis_list:
-                if r.llen(queue_name) > 0 or r.llen(processing_queue) > 0:
-                    all_empty = False
+                pipe = r.pipeline(transaction=False)
+
+                for _ in range(5000):
+                    pipe.rpop("results")
+
+                items = pipe.execute()
+                items = [x for x in items if x is not None]
+
+                if not items:
+                    continue
+
+                any_data = True
+
+                rows = []
+                for item in items:
+                    data = pickle.loads(item)
+                    rows.append((data["features"], float(data["mean_f1_macro"])))
+
+                total_count += len(rows)  # ✅ 统计
+
+                df = pd.DataFrame(rows, columns=["features", "mean_f1_macro"])
+
+                con.register("tmp_df", df)
+                con.execute("INSERT INTO results SELECT * FROM tmp_df")
+                con.unregister("tmp_df")
+
+            # =========================
+            # ✅ 只加这一段：停止逻辑
+            # =========================
+            if not any_data:
+                empty_rounds += 1
+                if empty_rounds >= 20:   # 连续20轮没数据 → 结束
+                    print("\n✅ 收集完成")
                     break
+                time.sleep(0.1)
+            else:
+                empty_rounds = 0
 
-            if all_empty:
-                print("✅ 所有 Redis 队列处理完成")
-                print(f"📊 总写入：{total_count:,}")
-                break
+    print(f"\n📊 总收集条数: {total_count}")
 
-            time.sleep(sleep_time)
-            continue
+    top10 = con.execute("""
+        SELECT mean_f1_macro, features
+        FROM results
+        ORDER BY mean_f1_macro DESC
+        LIMIT 10
+    """).fetchall()
 
-        # ---------- commit ----------
-        if batch_counter % commit_every == 0:
-            con.commit()
-
-        # ---------- 进度 ----------
-        if total_count % 50000 < batch_size:
-            print(f"🚀 已写入 {total_count:,}")
-
-    # ---------- 最终提交 ----------
-    con.commit()
-
-    # ---------- Top10 ----------
-    print("\n🏆 Top 10 Results:")
-
-    try:
-        top10 = con.execute(f"""
-            SELECT features, {score_name}
-            FROM {table_name}
-            ORDER BY {score_name} DESC
-            LIMIT 10
-        """).fetchall()
-
-        for i, (features, score) in enumerate(top10, 1):
-            print(f"{i:02d}. score={score:.6f}, features={features}")
-
-    except Exception as e:
-        print(f"⚠️ 查询 Top10 失败: {e}")
-
-    con.close()
+    print("\n🏆 Top 10:")
+    for i, (mean_f1_macro, features) in enumerate(top10, 1):
+        print(f"{i:01d}. mean_f1_macro={mean_f1_macro:.2f}, features={features}")

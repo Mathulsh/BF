@@ -12,11 +12,5 @@ collect_redis_results_to_duckdb(
     # redis_port=redis_port,
     # redis_password=redis_password,
     redis_list=redis_list,
-    queue_name="results",
-    processing_queue="results:processing",
     duckdb_path="results.duckdb",
-    table_name="results",
-    batch_size=5000,
-    sleep_time=0.01,
-    commit_every=2,
 )
