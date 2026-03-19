@@ -13,7 +13,7 @@ from numpy import ndarray
 
 time_start = time.time()
 
-data: DataFrame = pickle.load(open("/workspace/userdata/BF/data_43_3cls_train.pkl", "rb"))
+data: DataFrame = pickle.load(open("./data_43_3cls_train.pkl", "rb"))
 y = data.values[:, -1]
 
 # 验证阶段，9次就结束，实际跑的时候，需要while True
@@ -25,7 +25,7 @@ while True:
     task: list[str] | None
     raw_task: bytes | None
     err: Exception | None
-    task, raw_task, err = read_one_from_redis()
+    task, raw_task, err, r = read_one_from_redis() # type: ignore
     print(task, err)
     if err is not None:
         break
