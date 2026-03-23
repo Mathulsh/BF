@@ -10,3 +10,6 @@ six==1.16.0
 threadpoolctl==3.2.0
 tzdata==2024.2
 duckdb==0.10.3
+xgboost==3.2.0
+lightgbm==4.6.0
+catboost==1.2.8

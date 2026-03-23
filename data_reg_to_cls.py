@@ -139,8 +139,7 @@ def export_stratified_class_dataset(
 
 # X: pd.DataFrame
 # y: 连续值 pd.Series
-file_path = r'/Users/lishihong/projects/Research/HEA/43.csv'  # ========== 可变 ==========
-df = pd.read_csv(file_path)
+df = pd.read_csv(r'data/77.csv')
 X: pd.DataFrame = df.iloc[:, :-1]
 y_countinous: pd.Series = pd.Series(df.iloc[:, -1])
 
@@ -150,6 +149,6 @@ train_df, test_df = export_stratified_class_dataset(
     test_size=0.2,
     random_state=42,
     export_full_dataset=True,
-    output_prefix="43_3cls-1",
+    output_prefix="./data/77_3cls",
     scaler_type="minmax",
 )

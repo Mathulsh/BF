@@ -116,11 +116,10 @@ def push_result_to_redis(
     pipe.execute()
     
 def collect_redis_results_to_duckdb(
-    redis_list, 
+    redis_list,
     duckdb_path="results.duckdb",
-    ):
+):
     con = duckdb.connect(duckdb_path)
-
     con.execute("""
         CREATE TABLE IF NOT EXISTS results (
             features INTEGER[],
@@ -131,58 +130,47 @@ def collect_redis_results_to_duckdb(
     print("🚀 Fast collector started")
     total_count = 0
     empty_rounds = 0
-    
+    t_start = time.time()
+
     while True:
-            any_data = False
+        any_data = False
 
-            for r in redis_list:
-                pipe = r.pipeline(transaction=False)
+        for r in redis_list:
+            pipe = r.pipeline(transaction=False)
+            for _ in range(20000):
+                pipe.rpop("results")
+            items = pipe.execute()
+            items = [x for x in items if x is not None]
 
-                for _ in range(5000):
-                    pipe.rpop("results")
+            if not items:
+                continue
 
-                items = pipe.execute()
-                items = [x for x in items if x is not None]
+            any_data = True
 
-                if not items:
-                    continue
+            rows = []
+            for item in items:
+                data = pickle.loads(item)
+                rows.append((data["features"], float(data["mean_f1_macro"])))
 
-                any_data = True
+            n = len(rows)
+            total_count += n
 
-                rows = []
-                for item in items:
-                    data = pickle.loads(item)
-                    rows.append((data["features"], float(data["mean_f1_macro"])))
+            df = pd.DataFrame(rows, columns=["features", "mean_f1_macro"])
+            con.register("tmp_df", df)
+            con.execute("INSERT INTO results SELECT * FROM tmp_df")
+            con.unregister("tmp_df")
 
-                total_count += len(rows)  # ✅ 统计
+            # 每批打印一行，不覆盖，方便回溯
+            elapsed = time.time() - t_start
+            print(f"  +{n:<7,} → 累计 {total_count:>12,} 条 | {elapsed:6.1f}s", flush=True)
 
-                df = pd.DataFrame(rows, columns=["features", "mean_f1_macro"])
+        if not any_data:
+            empty_rounds += 1
+            if empty_rounds >= 20:
+                break
+            time.sleep(0.1)
+        else:
+            empty_rounds = 0
 
-                con.register("tmp_df", df)
-                con.execute("INSERT INTO results SELECT * FROM tmp_df")
-                con.unregister("tmp_df")
-
-            # =========================
-            # ✅ 只加这一段：停止逻辑
-            # =========================
-            if not any_data:
-                empty_rounds += 1
-                if empty_rounds >= 20:   # 连续20轮没数据 → 结束
-                    print("\n✅ 收集完成")
-                    break
-                time.sleep(0.1)
-            else:
-                empty_rounds = 0
-
-    print(f"\n📊 总收集条数: {total_count}")
-
-    top10 = con.execute("""
-        SELECT mean_f1_macro, features
-        FROM results
-        ORDER BY mean_f1_macro DESC
-        LIMIT 10
-    """).fetchall()
-
-    print("\n🏆 Top 10:")
-    for i, (mean_f1_macro, features) in enumerate(top10, 1):
-        print(f"{i:01d}. mean_f1_macro={mean_f1_macro:.2f}, features={features}")
+    elapsed = time.time() - t_start
+    print(f"\n✅ 收集完成 | 总计 {total_count:,} 条 | 耗时 {elapsed:.1f}s")

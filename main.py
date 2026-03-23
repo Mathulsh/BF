@@ -8,7 +8,11 @@ import sys
 import signal
 from itertools import combinations, islice
 from multiprocessing import Process
-from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier, ExtraTreesClassifier
+from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier, ExtraTreesClassifier, BaggingClassifier
+from sklearn.tree import DecisionTreeClassifier
+import xgboost as xgb
+import lightgbm as gbm
+import catboost as cat
 from sklearn.model_selection import cross_val_score, StratifiedKFold
 from sklearn.pipeline import Pipeline
 from rd3 import (
@@ -73,10 +77,10 @@ def push_combinations_to_redis():
         print("开始新的推送任务...")
 
     # 按顺序生成特征组合
-    whole_numbers: list[int] = list(range(1, 44))
-    comb = combinations(whole_numbers, 4)
+    whole_numbers: list[int] = list(range(1, 99))
+    comb = combinations(whole_numbers, 5)
 
-    batch_size = 10000  # 每批处理数据量
+    batch_size = 50000  # 每批处理数据量
     
     # 创建批次生成器，从指定索引开始
     def batch_generator_with_start(iterable, batch_size, start_index=0):
@@ -138,7 +142,7 @@ def push_combinations_to_redis():
 def train_models():
     print("Starting training process...")
 
-    data = pickle.load(open("data_43_3cls_train.pkl", "rb"))
+    data = pickle.load(open("data_98_3cls_train.pkl", "rb"))
     y = data.values[:, -1]
 
     while True:
@@ -157,7 +161,7 @@ def train_models():
                 X = data.loc[:, task].values
 
                 pipe = Pipeline([
-                    ('model', RandomForestClassifier(random_state=0))
+                    ('model', ExtraTreesClassifier(random_state=0))
                 ])
 
                 cv = list(StratifiedKFold(
@@ -194,12 +198,7 @@ def collect_results_to_duckdb():
     print("Starting to collect results to DuckDB...")
     collect_redis_results_to_duckdb(
         redis_list=redis_list,
-        queue_name="results",
         duckdb_path="results.duckdb",
-        table_name="results",
-        batch_size=10000,
-        sleep_time=0.01,
-        commit_every=10,
     )
 
 # ④ 主运行脚本
