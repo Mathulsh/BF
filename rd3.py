@@ -4,10 +4,10 @@ import pickle, time, duckdb
 
 # 服务器Redis实例
 redis_list = [
-    redis.Redis(host="10.64.199.25", port=41882, decode_responses=False),
-    redis.Redis(host="10.64.199.63", port=41883, decode_responses=False),
+    redis.Redis(host="10.64.199.63", port=41882, decode_responses=False),
+    redis.Redis(host="10.64.199.65", port=41883, decode_responses=False),
     redis.Redis(host="10.64.199.62", port=41884, decode_responses=False),
-    redis.Redis(host="10.64.199.26", port=41885, decode_responses=False),
+    redis.Redis(host="10.64.199.65", port=41885, decode_responses=False),
 ]
 # 本机Redis实例
 # redis_list = [
