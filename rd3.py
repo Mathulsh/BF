@@ -1,21 +1,79 @@
 '''功能函数:redis读写模块'''
 import redis, pandas as pd
 import pickle, time, duckdb
+import logging
 
-# 服务器Redis实例
-redis_list = [
-    redis.Redis(host="10.64.199.63", port=41882, decode_responses=False),
-    redis.Redis(host="10.64.199.65", port=41883, decode_responses=False),
-    redis.Redis(host="10.64.199.62", port=41884, decode_responses=False),
-    redis.Redis(host="10.64.199.65", port=41885, decode_responses=False),
+# 配置日志
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+# Redis配置
+REDIS_CONFIGS = [
+    {"host": "10.64.199.62", "port": 41882},
+    {"host": "10.64.199.65", "port": 41979},
+    {"host": "10.64.199.63", "port": 41980},
+    # {"host": "10.64.199.65", "port": 41885},
 ]
-# 本机Redis实例
-# redis_list = [
-#     redis.Redis(host="127.0.0.1", port=6379, decode_responses=False),
-#     redis.Redis(host="127.0.0.1", port=6380, decode_responses=False),
-#     redis.Redis(host="127.0.0.1", port=6381, decode_responses=False),
-#     redis.Redis(host="127.0.0.1", port=6382, decode_responses=False),
-# ]
+
+def create_redis_clients():
+    """创建Redis客户端列表，配置健康检查和超时参数"""
+    clients = []
+    for config in REDIS_CONFIGS:
+        try:
+            client = redis.Redis(
+                host=config["host"],
+                port=config["port"],
+                decode_responses=False,
+                socket_connect_timeout=10,
+                socket_timeout=30,
+                health_check_interval=30,
+                retry_on_timeout=True,
+                max_connections=50,
+            )
+            # 测试连接
+            client.ping()
+            clients.append(client)
+            logger.info(f"Redis {config['host']}:{config['port']} 连接成功")
+        except Exception as e:
+            logger.warning(f"Redis {config['host']}:{config['port']} 连接失败: {e}")
+            # 创建占位符，后续会尝试重连
+            clients.append(None)
+    return clients
+
+def get_healthy_redis_clients():
+    """获取健康的Redis客户端列表，自动剔除不可用的"""
+    healthy = []
+    for i, client in enumerate(redis_list):
+        if client is None:
+            # 尝试重新连接
+            try:
+                config = REDIS_CONFIGS[i]
+                client = redis.Redis(
+                    host=config["host"],
+                    port=config["port"],
+                    decode_responses=False,
+                    socket_connect_timeout=10,
+                    socket_timeout=30,
+                    health_check_interval=30,
+                    retry_on_timeout=True,
+                )
+                client.ping()
+                redis_list[i] = client
+                healthy.append(client)
+                logger.info(f"Redis {config['host']}:{config['port']} 重连成功")
+            except Exception as e:
+                pass
+        else:
+            try:
+                client.ping()
+                healthy.append(client)
+            except Exception:
+                logger.warning(f"Redis 实例 {i} 不健康，暂时剔除")
+                redis_list[i] = None
+    return healthy if healthy else []
+
+# 初始化Redis实例
+redis_list = create_redis_clients()
 idx = 0
 
 def push_to_redis(combs):
@@ -31,14 +89,22 @@ def push_to_redis(combs):
         pipe.execute()
 
 def read_one_from_redis() -> tuple[list[list[str]] | None, bytes | None, Exception | None, redis.Redis | None]:
-    """从多个 Redis 轮询读取任务（真正负载均衡版）"""
+    """从多个 Redis 轮询读取任务（真正负载均衡版，带故障转移）"""
     global idx
-    n = len(redis_list)
-
+    
     while True:
+        # 获取健康的Redis客户端
+        healthy_clients = get_healthy_redis_clients()
+        if not healthy_clients:
+            logger.error("所有 Redis 实例均不可用，等待重试...")
+            time.sleep(1)
+            continue
+        
+        n = len(healthy_clients)
+        
         # 🎯 从当前 idx 开始轮询
         for i in range(n):
-            r = redis_list[(idx + i) % n]
+            r = healthy_clients[(idx + i) % n]
 
             try:
                 raw_item = r.lmove(
@@ -72,6 +138,9 @@ def read_one_from_redis() -> tuple[list[list[str]] | None, bytes | None, Excepti
 
                 return tasks, data_bytes, None, r
 
+            except (redis.ConnectionError, redis.TimeoutError) as e:
+                logger.warning(f"Redis 连接错误，将尝试其他实例: {e}")
+                continue
             except Exception as e:
                 return None, None, e, None
 
@@ -83,25 +152,20 @@ def push_result_to_redis(
     r: redis.Redis | None = None,
     result_data: dict | None,
     raw_task: bytes | None,
-) -> None:
-
+    max_retries: int = 3,
+) -> bool:
+    """
+    推送结果到Redis，支持自动重试和故障转移
+    
+    Returns:
+        bool: 是否成功推送
+    """
     if result_data is None or raw_task is None:
-        return
+        return False
 
-    # 🎯 结果写入：使用指定Redis或负载均衡
-    if r is not None:
-        target_redis = r
-    else:
-        target_redis = redis_list[
-            hash(raw_task) % len(redis_list)
-        ]
     payload = pickle.dumps(result_data, protocol=pickle.HIGHEST_PROTOCOL)
 
-    # 1️⃣ 写结果
-    pipe = target_redis.pipeline(transaction=True)
-    pipe.rpush("results", payload)
-
-    # 2️⃣ ACK
+    # 准备ACK值
     if isinstance(raw_task, memoryview):
         value = raw_task.tobytes()
     elif isinstance(raw_task, (bytes, bytearray)):
@@ -110,10 +174,87 @@ def push_result_to_redis(
         value = raw_task.encode()
     else:
         raise TypeError(f"Unexpected raw_task type: {type(raw_task)!r}")
-    pipe.lrem("mylist:processing", 1, value) # type: ignore
+
+    # 🎯 结果写入：使用指定Redis或负载均衡
+    if r is not None:
+        # 优先尝试原Redis，失败则切换到其他健康实例
+        candidates = [r] + [c for c in redis_list if c is not None and c != r]
+    else:
+        candidates = [c for c in redis_list if c is not None]
+
+    for attempt in range(max_retries):
+        for target_redis in candidates:
+            if target_redis is None:
+                continue
+            try:
+                # 1️⃣ 写结果
+                pipe = target_redis.pipeline(transaction=True)
+                pipe.rpush("results", payload)
+
+                # 2️⃣ ACK - 从processing队列移除
+                pipe.lrem("mylist:processing", 1, value.decode())
+                
+                # 3️⃣ 执行
+                pipe.execute()
+                return True
+                
+            except (redis.ConnectionError, redis.TimeoutError) as e:
+                logger.warning(f"Redis 写入失败(尝试 {attempt+1}/{max_retries}): {e}")
+                time.sleep(0.5 * (attempt + 1))  # 指数退避
+                continue
+            except Exception as e:
+                logger.error(f"Redis 写入未知错误: {e}")
+                raise
     
-    # 3️⃣ 执行
-    pipe.execute()
+    logger.error(f"所有 Redis 实例写入失败，结果可能丢失: {result_data}")
+    return False
+
+
+def safe_ack_processing(r: redis.Redis | None, raw_task: bytes | None, max_retries: int = 3) -> bool:
+    """
+    安全地从processing队列移除任务，带重试机制
+    用于异常处理时清理队列，避免任务卡住
+    
+    Returns:
+        bool: 是否成功
+    """
+    if raw_task is None:
+        return True
+    
+    # 准备值
+    if isinstance(raw_task, memoryview):
+        value = raw_task.tobytes()
+    elif isinstance(raw_task, (bytes, bytearray)):
+        value = bytes(raw_task)
+    elif isinstance(raw_task, str):
+        value = raw_task.encode()
+    else:
+        logger.error(f"未知的raw_task类型: {type(raw_task)}")
+        return False
+    
+    # 候选Redis实例
+    if r is not None:
+        candidates = [r] + [c for c in redis_list if c is not None and c != r]
+    else:
+        candidates = [c for c in redis_list if c is not None]
+    
+    for attempt in range(max_retries):
+        for target_redis in candidates:
+            if target_redis is None:
+                continue
+            try:
+                target_redis.lrem("mylist:processing", 1, value.decode()) 
+                return True
+            except (redis.ConnectionError, redis.TimeoutError) as e:
+                logger.warning(f"ACK失败(尝试 {attempt+1}/{max_retries}): {e}")
+                time.sleep(0.3 * (attempt + 1))
+                continue
+            except Exception as e:
+                logger.error(f"ACK未知错误: {e}")
+                return False
+    
+    logger.error("无法从processing队列移除任务，任务可能滞留")
+    return False
     
 def collect_redis_results_to_duckdb(
     redis_list,

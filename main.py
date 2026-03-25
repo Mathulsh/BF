@@ -20,11 +20,13 @@ from rd3 import (
     push_to_redis, 
     read_one_from_redis, 
     push_result_to_redis,
+    safe_ack_processing,
     # redis_host, 
     # redis_port, 
     # redis_password,
     redis_list, 
-    collect_redis_results_to_duckdb
+    collect_redis_results_to_duckdb,
+    get_healthy_redis_clients,
 )
 # ① 对应que_push.py
 # 添加全局变量用于控制程序运行状态
@@ -189,8 +191,8 @@ def train_models():
             except Exception as e:
                 print("Training error:", e)
 
-                # ❗ 防止死循环（必须 ACK）
-                source_redis.lrem("mylist:processing", 1, raw_task) # type: ignore
+                # ❗ 防止死循环（必须 ACK）- 使用安全的ACK函数
+                safe_ack_processing(r=source_redis, raw_task=raw_task)
                 continue
             print("task:", task, "Mean F1-macro:", scores.mean().round(2))
         
@@ -217,6 +219,13 @@ def main():
             pass
     print(f"启动 {num_workers} 个 worker")
 
+    # Step 0: 检查Redis健康状态
+    healthy_count = len(get_healthy_redis_clients())
+    if healthy_count == 0:
+        print("❌ 错误: 所有 Redis 实例均不可用，请检查网络连接和Redis服务器状态")
+        sys.exit(1)
+    print(f"✅ Redis 健康检查通过，{healthy_count}/{len(redis_list)} 个实例可用")
+    
     # Step 1: Push combinations to Redis
     push_combinations_to_redis()
     
