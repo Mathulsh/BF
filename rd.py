@@ -208,7 +208,7 @@ def push_result_to_redis(
                 pipe.rpush("results", payload)
 
                 # 2️⃣ ACK - 从processing队列移除
-                pipe.lrem("mylist:processing", 1, value.decode())
+                pipe.lrem("mylist:processing", 1, value) # type: ignore
                 
                 # 3️⃣ 执行
                 pipe.execute()
@@ -259,7 +259,7 @@ def safe_ack_processing(r: redis.Redis | None, raw_task: bytes | None, max_retri
             if target_redis is None:
                 continue
             try:
-                target_redis.lrem("mylist:processing", 1, value.decode()) 
+                target_redis.lrem("mylist:processing", 1, value)  # type: ignore
                 return True
             except (redis.ConnectionError, redis.TimeoutError) as e:
                 logger.warning(f"ACK失败(尝试 {attempt+1}/{max_retries}): {e}")
@@ -275,6 +275,9 @@ def safe_ack_processing(r: redis.Redis | None, raw_task: bytes | None, max_retri
 def collect_redis_results_to_duckdb(
     redis_list,
     duckdb_path="results.duckdb",
+    batch_size=20000,
+    idle_timeout=30,
+
 ):
     con = duckdb.connect(duckdb_path)
     con.execute("""
@@ -296,7 +299,7 @@ def collect_redis_results_to_duckdb(
 
         for r in redis_list:
             pipe = r.pipeline(transaction=False)
-            for _ in range(20000):
+            for _ in range(batch_size):
                 pipe.rpop("results")
             items = pipe.execute()
             items = [x for x in items if x is not None]

@@ -14,7 +14,7 @@ import xgboost as xgb
 import lightgbm as gbm
 import catboost as cat
 from math import comb as math_comb
-from sklearn.model_selection import cross_val_score, StratifiedKFold
+from sklearn.model_selection import cross_val_score, cross_validate, StratifiedKFold
 from sklearn.pipeline import Pipeline
 from rd import (
     push_to_redis, 
@@ -80,10 +80,14 @@ def push_combinations_to_redis():
         print("开始新的推送任务...")
 
     # 按顺序生成特征组合
-    whole_numbers: list[int] = list(range(1, 99))
-    total = math_comb(len(whole_numbers), 5)
+    N = 99
+    n = 4
+    whole_numbers: list[int] = list(range(1, N + 1))
+    total = math_comb(len(whole_numbers), n)
     print(f"总组合数: {total:,}")
     batch_size = 50000  # 每批处理数据量
+    comb = combinations(whole_numbers, n)
+
     
     # 创建批次生成器，从指定索引开始
     def batch_generator_with_start(iterable, batch_size, start_index=0):
@@ -104,7 +108,6 @@ def push_combinations_to_redis():
                 break
             yield current_index, batch  # 同时返回索引和批次数据
             current_index += 1
-    comb = combinations(whole_numbers, 5)
 
     for i, batch in batch_generator_with_start(comb, batch_size, start_batch_index):
         # 检查是否收到中断信号
@@ -146,7 +149,7 @@ def push_combinations_to_redis():
 def train_models():
     print("Starting training process...")
 
-    data = pickle.load(open("data_98_3cls_train.pkl", "rb"))
+    data = pickle.load(open("data_99_3cls_train.pkl", "rb"))
     y = data.values[:, -1]
 
     while True:
@@ -162,23 +165,17 @@ def train_models():
 
         for task in tasks:
             try:
-                X = data.loc[:, task].values
-
-                pipe = Pipeline([
-                    ('model', ExtraTreesClassifier(random_state=0))
-                ])
-
-                cv = list(StratifiedKFold(
-                    n_splits=5, shuffle=True, random_state=42
-                ).split(np.zeros(len(y)), y))
-
-                scores = cross_val_score(
-                    pipe, X, y, cv=cv, scoring="f1_macro"
-                )
+                task_int = [int(t) for t in task]
+                X = data.loc[:, task_int].values
+                model = GradientBoostingClassifier(random_state=0)
+                cv = list(StratifiedKFold(n_splits=5, shuffle=True, random_state=42).split(np.zeros(len(y)), y))
+                scoring = ["f1_macro", "accuracy"]
+                scores = cross_validate(model, X, y, cv=cv, scoring=scoring, n_jobs=1)
 
                 result_data = {
                     "features": task,
-                    "mean_f1_macro": float(scores.mean().round(2)),
+                    "mean_f1_macro": float(scores["test_f1_macro"].mean().round(2)),
+                    "mean_accuracy": float(scores['test_accuracy'].mean().round(2)),
                 }
 
                 # ✅ 写结果 + ACK（必须同一个 Redis）
@@ -194,7 +191,7 @@ def train_models():
                 # ❗ 防止死循环（必须 ACK）- 使用安全的ACK函数
                 safe_ack_processing(r=source_redis, raw_task=raw_task)
                 continue
-            print("task:", task, "Mean F1-macro:", scores.mean().round(2))
+            print("task:", task, "f1:", scores["test_f1_macro"].mean().round(2), "acc:", scores['test_accuracy'].mean().round(2))
         
 # ③ 对应data_to_duckdb.py
 def collect_results_to_duckdb():
