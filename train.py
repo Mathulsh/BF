@@ -37,6 +37,9 @@ while True:
         # no task retrieved; stop processing
         break
     try:
+        # read_one_from_redis 返回的是 list[list[str]]，取第一个任务
+        if isinstance(task, list) and len(task) > 0 and isinstance(task[0], list):
+            task = task[0]
         task_int = [int(t) for t in task]
         X = data.loc[:, task_int].values
         model = GradientBoostingClassifier(random_state=0)
