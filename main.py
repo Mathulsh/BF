@@ -16,7 +16,7 @@ import catboost as cat
 from math import comb as math_comb
 from sklearn.model_selection import cross_val_score, StratifiedKFold
 from sklearn.pipeline import Pipeline
-from rd3 import (
+from rd import (
     push_to_redis, 
     read_one_from_redis, 
     push_result_to_redis,

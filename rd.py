@@ -1,340 +1,336 @@
 '''功能函数:redis读写模块'''
-import os
-import redis
-from typing import Iterable, Tuple, List
-import pickle, time, duckdb
-from typing import Optional, cast
+import redis, pandas as pd
+import pickle, time, duckdb, datetime
+import logging
 
-redis_host: str = os.getenv("REDIS_HOST", "redis-17122.c8.us-east-1-4.ec2.cloud.redislabs.com")
-redis_port: int = int(os.getenv("REDIS_PORT", 17122))
-redis_password: str = os.getenv("REDIS_PASSWORD", "BQOmVL2fC0SfXCuO2NjJFvNriLAzbsp0")
+# 配置日志
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
-def push_to_redis(combs: Iterable[tuple[int, ...]]):
-    """
-    将计算任务推送至 Redis 队列（Pickle 协议）
-    :param combs: Iterable[tuple[int]]
-    """
-    r = redis.StrictRedis(
-        host=redis_host,
-        port=redis_port,
-        db=0,
-        password=redis_password,
-        username="default",
-        decode_responses=False,
-        socket_timeout=30,
-        max_connections=30,
-    )
+# Redis配置——hz
+REDIS_CONFIGS = [
+    {"host": "10.64.199.62", "port": 41882},
+    {"host": "10.64.199.65", "port": 41979},
+    {"host": "10.64.199.63", "port": 41980},
+    {"host": "10.64.199.30", "port": 41995},
+]
 
-    pipe = r.pipeline()
+# Redis配置——bj
+# REDIS_CONFIGS = [
+#     {"host": "172.19.123.200", "port": 40069},
+#     {"host": "172.19.123.200", "port": 40071},
+#     {"host": "172.19.123.200", "port": 40072},
+#     {"host": "172.19.123.200", "port": 40073},
+# ]
+
+# Redis配置——本地
+# REDIS_CONFIGS = [
+#     {"host": "127.0.0.1", "port": 6379},
+#     {"host": "127.0.0.1", "port": 6380},
+#     {"host": "127.0.0.1", "port": 6381},
+#     {"host": "127.0.0.1", "port": 6382},
+# ]
+
+def create_redis_clients():
+    """创建Redis客户端列表，配置健康检查和超时参数"""
+    clients = []
+    for config in REDIS_CONFIGS:
+        try:
+            client = redis.Redis(
+                host=config["host"],
+                port=config["port"],
+                decode_responses=False,
+                socket_connect_timeout=10,
+                socket_timeout=30,
+                health_check_interval=30,
+                retry_on_timeout=True,
+                max_connections=50,
+            )
+            # 测试连接
+            client.ping()
+            clients.append(client)
+            logger.info(f"Redis {config['host']}:{config['port']} 连接成功")
+        except Exception as e:
+            logger.warning(f"Redis {config['host']}:{config['port']} 连接失败: {e}")
+            # 创建占位符，后续会尝试重连
+            clients.append(None)
+    return clients
+
+def get_healthy_redis_clients():
+    """获取健康的Redis客户端列表，自动剔除不可用的"""
+    healthy = []
+    for i, client in enumerate(redis_list):
+        if client is None:
+            # 尝试重新连接
+            try:
+                config = REDIS_CONFIGS[i]
+                client = redis.Redis(
+                    host=config["host"],
+                    port=config["port"],
+                    decode_responses=False,
+                    socket_connect_timeout=10,
+                    socket_timeout=30,
+                    health_check_interval=30,
+                    retry_on_timeout=True,
+                )
+                client.ping()
+                redis_list[i] = client
+                healthy.append(client)
+                logger.info(f"Redis {config['host']}:{config['port']} 重连成功")
+            except Exception as e:
+                pass
+        else:
+            try:
+                client.ping()
+                healthy.append(client)
+            except Exception:
+                logger.warning(f"Redis 实例 {i} 不健康，暂时剔除")
+                redis_list[i] = None
+    return healthy if healthy else []
+
+# 初始化Redis实例
+redis_list = create_redis_clients()
+idx = 0
+
+def push_to_redis(combs):
+    pipes = [r.pipeline() for r in redis_list]
 
     for cb in combs:
-        task = {
-            "features": list(cb)
-        }
-        pipe.rpush("mylist", pickle.dumps(task))
+        task = {"features": list(cb)}
 
-    pipe.execute()
+        i = hash(cb) % len(redis_list)
+        pipes[i].rpush("mylist", pickle.dumps(task))
 
-def read_one_from_redis() -> tuple[list[str] | None, bytes | None, Exception | None]:
-    """
-    从 Redis 安全读取一个任务（RPOPLPUSH 语义）
-    :return:
-        - task(str list) 或 None
-        - raw_item(bytes)：用于 ACK
-        - Exception：无数据时返回
-    """
+    for pipe in pipes:
+        pipe.execute()
 
-    r = redis.StrictRedis(
-        host=redis_host,
-        port=redis_port,
-        decode_responses=False,
-        username="default",
-        db=0,
-        password=redis_password,
-        socket_timeout=30,
-        max_connections=30,
-    )
-
-    # 原子操作：mylist -> mylist:processing
-    # FIFO：LEFT -> RIGHT
-    raw_item = r.lmove(
-        "mylist",              # source
-        "mylist:processing",   # destination
-        "LEFT",                # 从队头取
-        "RIGHT",               # 放到 processing 尾
-    )
-    if raw_item is None:
-        return None, None, Exception("队列没有数据")
-
-    # 确保 bytes
-    if isinstance(raw_item, (bytes, bytearray)):
-        data_bytes = raw_item
-    elif isinstance(raw_item, str):
-        data_bytes = raw_item.encode()
-    else:
-        raise TypeError(f"Unexpected data type from redis: {type(raw_item)!r}")
-
-    data_dict = pickle.loads(data_bytes)
-    task: list[str] = list(map(str, data_dict["features"]))
-
-    # ⚠️ 返回 raw_item，用于后续 ACK
-    return task, data_bytes, None
+def read_one_from_redis() -> tuple[list[list[str]] | None, bytes | None, Exception | None, redis.Redis | None]:
+    """从多个 Redis 轮询读取任务（真正负载均衡版，带故障转移）"""
+    global idx
     
+    while True:
+        # 获取健康的Redis客户端
+        healthy_clients = get_healthy_redis_clients()
+        if not healthy_clients:
+            logger.error("所有 Redis 实例均不可用，等待重试...")
+            time.sleep(1)
+            continue
+        
+        n = len(healthy_clients)
+        
+        # 🎯 从当前 idx 开始轮询
+        for i in range(n):
+            r = healthy_clients[(idx + i) % n]
+
+            try:
+                raw_item = r.lmove(
+                    "mylist",
+                    "mylist:processing",
+                    "LEFT",
+                    "RIGHT",
+                )
+                if raw_item is None:
+                    continue
+
+                # ✅ 更新轮转起点（关键）
+                idx = (idx + i + 1) % n
+
+                # ---------- bytes处理 ----------
+                if isinstance(raw_item, (bytes, bytearray)):
+                    data_bytes = raw_item
+                elif isinstance(raw_item, str):
+                    data_bytes = raw_item.encode()
+                else:
+                    raise TypeError(f"Unexpected data type from redis: {type(raw_item)!r}")
+
+
+                data = pickle.loads(data_bytes)
+
+                # ---------- batch兼容 ----------
+                if isinstance(data, list):
+                    tasks = [list(map(str, d["features"])) for d in data]
+                else:
+                    tasks = [list(map(str, data["features"]))]
+
+                return tasks, data_bytes, None, r
+
+            except (redis.ConnectionError, redis.TimeoutError) as e:
+                logger.warning(f"Redis 连接错误，将尝试其他实例: {e}")
+                continue
+            except Exception as e:
+                return None, None, e, None
+
+        # ❗所有 Redis 都空 → sleep
+        time.sleep(0.01)
+        
 def push_result_to_redis(
     *,
+    r: redis.Redis | None = None,
     result_data: dict | None,
     raw_task: bytes | None,
-) -> None:
+    max_retries: int = 3,
+) -> bool:
     """
-    推送结果并 ACK 原任务
-    必须保证：先写结果，再 ACK
+    推送结果到Redis，支持自动重试和故障转移
+    
+    Returns:
+        bool: 是否成功推送
     """
-
     if result_data is None or raw_task is None:
-        return
-
-    r = redis.StrictRedis(
-        host=redis_host,
-        port=redis_port,
-        db=0,
-        password=redis_password,
-        decode_responses=False,
-        username="default",
-        socket_timeout=30,
-        max_connections=30,
-    )
+        return False
 
     payload = pickle.dumps(result_data, protocol=pickle.HIGHEST_PROTOCOL)
 
-    # ========= 关键顺序 =========
-    pipe = r.pipeline(transaction=True)
-
-    # 1️⃣ 写结果（成功才算任务完成）
-    pipe.rpush("results", payload)
-
-    # 2️⃣ ACK：从 processing 删除原任务
-    # ensure bytes for lrem; handle memoryview/bytearray/str consistently
+    # 准备ACK值
     if isinstance(raw_task, memoryview):
-        value_for_lrem = raw_task.tobytes()
+        value = raw_task.tobytes()
     elif isinstance(raw_task, (bytes, bytearray)):
-        value_for_lrem = bytes(raw_task)
+        value = bytes(raw_task)
     elif isinstance(raw_task, str):
-        value_for_lrem = raw_task.encode()
+        value = raw_task.encode()
     else:
         raise TypeError(f"Unexpected raw_task type: {type(raw_task)!r}")
 
-    # lrem may have a stricter type hint; pass bytes and silence arg-type checking
-    pipe.lrem("mylist:processing", 1, value_for_lrem)  # type: ignore[arg-type]
+    # 🎯 结果写入：使用指定Redis或负载均衡
+    if r is not None:
+        # 优先尝试原Redis，失败则切换到其他健康实例
+        candidates = [r] + [c for c in redis_list if c is not None and c != r]
+    else:
+        candidates = [c for c in redis_list if c is not None]
 
-    pipe.execute()
+    for attempt in range(max_retries):
+        for target_redis in candidates:
+            if target_redis is None:
+                continue
+            try:
+                # 1️⃣ 写结果
+                pipe = target_redis.pipeline(transaction=True)
+                pipe.rpush("results", payload)
 
-def collect_redis_results_to_duckdb(
-    *,
-    redis_host: str,
-    redis_port: int,
-    redis_password: Optional[str],
-    queue_name: str = "results",                 # ✅ 明确：只从 results 拉
-    processing_queue: str = "results:processing",
-    duckdb_path: str = "results.duckdb",
-    table_name: str = "results",
-    batch_size: int = 5000,
-    sleep_time: float = 0.01,
-):
-    """
-    从 Redis 的 results 队列拉取数据（不丢数据，高速版）
+                # 2️⃣ ACK - 从processing队列移除
+                pipe.lrem("mylist:processing", 1, value.decode())
+                
+                # 3️⃣ 执行
+                pipe.execute()
+                return True
+                
+            except (redis.ConnectionError, redis.TimeoutError) as e:
+                logger.warning(f"Redis 写入失败(尝试 {attempt+1}/{max_retries}): {e}")
+                time.sleep(0.5 * (attempt + 1))  # 指数退避
+                continue
+            except Exception as e:
+                logger.error(f"Redis 写入未知错误: {e}")
+                raise
     
-    Redis item（pickle）:
-    {
-        "features": list[int],
-        "f1_macro": float
-    }
+    logger.error(f"所有 Redis 实例写入失败，结果可能丢失: {result_data}")
+    return False
+
+
+def safe_ack_processing(r: redis.Redis | None, raw_task: bytes | None, max_retries: int = 3) -> bool:
     """
-    score_name = "mean_f1_macro" # ⚠️修改 mean_f1_macro、precision_macro、recall_macro
-    # Redis
-    r = redis.Redis(
-        host=redis_host,
-        port=redis_port,
-        password=redis_password,
-        decode_responses=False
-    )
-
-    # DuckDB
-    con = duckdb.connect(duckdb_path)
-    con.execute(f"""
-    CREATE TABLE IF NOT EXISTS {table_name} (
-        features INTEGER[],
-        {score_name} DOUBLE
-    )
-    """)
-
-    # Lua：从 results → results:processing（原子、批量）
-    pop_script = r.register_script("""
-    local res = {}
-    local n = tonumber(ARGV[1])
-
-    for i = 1, n do
-        local item = redis.call(
-            "RPOPLPUSH",
-            KEYS[1],   -- results
-            KEYS[2]    -- results:processing
-        )
-        if not item then
-            break
-        end
-        table.insert(res, item)
-    end
-
-    return res
-    """)
-
-    total_count = 0
-    while True:
-        # 1️⃣ 原子批量拉取
-        items = cast(list, pop_script(
-            keys=[queue_name, processing_queue],
-            args=[batch_size]
-        ))
-
-        if not items:
-            time.sleep(sleep_time)
-            continue
-        
-        # ================= 拉取为空 =================
-        if not items:
-            # 🔍 判断是否真的“拉取完”
-            remaining = r.llen(queue_name)
-            processing = r.llen(processing_queue)
-
-            if remaining == 0 and processing == 0:
-                print("✅ Redis 队列已清空，数据拉取完成")
-                print(f"📊 本次共写入 DuckDB 数据量：{total_count}")
-                break
-
-            # 仍可能有生产者或处理中数据
-            time.sleep(sleep_time)
-            continue
-        
-         # ================= 反序列化 =================
-        buffer = []
-        for item in items:
-            data = pickle.loads(item)
-            buffer.append((
-                data["features"],
-                float(data[score_name]),
-            ))
-
-        # 2️⃣ 写 DuckDB（事务）
-        try:
-            con.executemany(
-                f"INSERT INTO {table_name} VALUES (?, ?)",
-                buffer
-            )
-        except Exception:
-            # ❌ 写失败：不 ACK，数据仍在 processing_queue
-            raise
-        
-        # ✅ 成功写入 → 累计条数
-        batch_count = len(buffer)
-        total_count += batch_count
-        
-        # 3️⃣ ACK：确认成功后，从 processing 删除
-        pipe = r.pipeline()
-        for item in items:
-            pipe.lrem(processing_queue, 1, item)
-        pipe.execute()
-        
-        # （可选）实时进度
-        print(f"已写入 {total_count} 条数据到 DuckDB")
-        
-def collect_redis_results_to_duckdb1(
-    *,
-    redis_host: str,
-    redis_port: int,
-    redis_password: Optional[str],
-    queue_name: str = "results",
-    duckdb_path: str = "results.duckdb",
-    table_name: str = "results",
-    batch_size: int = 5000,
-    sleep_time: float = 0.01,
+    安全地从processing队列移除任务，带重试机制
+    用于异常处理时清理队列，避免任务卡住
+    
+    Returns:
+        bool: 是否成功
+    """
+    if raw_task is None:
+        return True
+    
+    # 准备值
+    if isinstance(raw_task, memoryview):
+        value = raw_task.tobytes()
+    elif isinstance(raw_task, (bytes, bytearray)):
+        value = bytes(raw_task)
+    elif isinstance(raw_task, str):
+        value = raw_task.encode()
+    else:
+        logger.error(f"未知的raw_task类型: {type(raw_task)}")
+        return False
+    
+    # 候选Redis实例
+    if r is not None:
+        candidates = [r] + [c for c in redis_list if c is not None and c != r]
+    else:
+        candidates = [c for c in redis_list if c is not None]
+    
+    for attempt in range(max_retries):
+        for target_redis in candidates:
+            if target_redis is None:
+                continue
+            try:
+                target_redis.lrem("mylist:processing", 1, value.decode()) 
+                return True
+            except (redis.ConnectionError, redis.TimeoutError) as e:
+                logger.warning(f"ACK失败(尝试 {attempt+1}/{max_retries}): {e}")
+                time.sleep(0.3 * (attempt + 1))
+                continue
+            except Exception as e:
+                logger.error(f"ACK未知错误: {e}")
+                return False
+    
+    logger.error("无法从processing队列移除任务，任务可能滞留")
+    return False
+    
+def collect_redis_results_to_duckdb(
+    redis_list,
+    duckdb_path="results.duckdb",
 ):
-    """
-    从 Redis 的 results 队列拉取数据（不丢数据，节省内存版）
-    直接从 results 队列弹出数据，无需中间队列，节省内存，绝对会丢数据，结合duckdb_check.py中的漏数据检查函数使用
-
-    Redis item（pickle）:
-    {
-        "features": list[int],
-        "mean_f1_macro": float
-    }
-    """
-
-    # Redis
-    r = redis.Redis(
-        host=redis_host,
-        port=redis_port,
-        password=redis_password,
-        decode_responses=False
-    )
-
-    # DuckDB
     con = duckdb.connect(duckdb_path)
-    con.execute(f"""
-    CREATE TABLE IF NOT EXISTS {table_name} (
-        features INTEGER[],
-        mean_f1_macro DOUBLE
-    )
-    """)
-
+    con.execute("""
+                CREATE TABLE results (
+                    features INTEGER[],
+                    mean_f1_macro DOUBLE,
+                    mean_accuracy DOUBLE,
+                    created_at TIMESTAMP
+                )
+            """)
+    print("🚀 Fast collector started")
+    
     total_count = 0
+    empty_rounds = 0
+    t_start = time.time()
+
     while True:
-        # 直接从 results 队列弹出数据，一次性获取一批数据
-        items = []
-        for _ in range(batch_size):
-            item = r.rpop(queue_name)  # 直接从右侧弹出，无需中间队列
-            if item is None:
+        any_data = False
+
+        for r in redis_list:
+            pipe = r.pipeline(transaction=False)
+            for _ in range(20000):
+                pipe.rpop("results")
+            items = pipe.execute()
+            items = [x for x in items if x is not None]
+
+            if not items:
+                continue
+
+            any_data = True
+
+            rows = []
+            now = datetime.datetime.now()
+            for item in items:
+                data = pickle.loads(item)
+                rows.append((data["features"], float(data["mean_f1_macro"]), float(data["mean_accuracy"]), now))
+
+            n = len(rows)
+            total_count += n
+
+            df = pd.DataFrame(rows, columns=["features", "mean_f1_macro", "mean_accuracy", "created_at"])
+            con.register("tmp_df", df)
+            con.execute("INSERT INTO results SELECT * FROM tmp_df")
+            con.unregister("tmp_df")
+
+            # 每批打印一行，不覆盖，方便回溯
+            elapsed = time.time() - t_start
+            print(f"  +{n:<7,} → 累计 {total_count:>12,} 条 | {elapsed:6.1f}s", flush=True)
+
+        if not any_data:
+            empty_rounds += 1
+            if empty_rounds >= 20:
                 break
-            items.append(item)
+            time.sleep(0.1)
+        else:
+            empty_rounds = 0
 
-        # ================= 拉取为空 =================
-        if not items:
-            # 检查队列是否还有数据
-            remaining = r.llen(queue_name)
-            
-            if remaining == 0:
-                print("✅ Redis 队列已清空，数据拉取完成")
-                print(f"📊 本次共写入 DuckDB 数据量：{total_count}")
-                break
-
-            # 仍可能有生产者在添加数据
-            time.sleep(sleep_time)
-            continue
-        
-        # ================= 反序列化 =================
-        buffer = []
-        for item in items:
-            data = pickle.loads(item)
-            buffer.append((
-                data["features"],
-                float(data["mean_f1_macro"])
-            ))
-
-        # 2️⃣ 写 DuckDB（事务）
-        try:
-            con.executemany(
-                f"INSERT INTO {table_name} VALUES (?, ?)",
-                buffer
-            )
-        except Exception as e:
-            print(f"❌ 写入 DuckDB 失败: {e}")
-            # 由于数据已经从Redis中弹出，如果写入失败，需要重新设计错误处理策略
-            # 这里我们跳过这批失败的数据，继续处理下一批
-            continue
-        
-        # ✅ 成功写入 → 累计条数
-        batch_count = len(buffer)
-        total_count += batch_count
-        
-        # 由于使用了 rpop 直接弹出，数据已自动从队列中删除，无需额外ACK
-        
-        # （可选）实时进度
-        print(f"已写入 {total_count} 条数据到 DuckDB")
+    elapsed = time.time() - t_start
+    print(f"\n✅ 收集完成 | 总计 {total_count:,} 条 | 耗时 {elapsed:.1f}s")
