@@ -8,12 +8,12 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 # Redis配置——hz
-# REDIS_CONFIGS = [
-#     {"host": "10.64.199.62", "port": 41882},
-#     {"host": "10.64.199.65", "port": 41979},
-#     {"host": "10.64.199.63", "port": 41980},
-#     {"host": "10.64.199.30", "port": 41995},
-# ]
+REDIS_CONFIGS = [
+    {"host": "10.64.199.62", "port": 41882},
+    {"host": "10.64.199.65", "port": 41979},
+    {"host": "10.64.199.63", "port": 41980},
+    {"host": "10.64.199.30", "port": 41995},
+]
 
 # Redis配置——bj
 # REDIS_CONFIGS = [
@@ -24,12 +24,12 @@ logger = logging.getLogger(__name__)
 # ]
 
 # Redis配置——本地
-REDIS_CONFIGS = [
-    {"host": "127.0.0.1", "port": 6379},
-    {"host": "127.0.0.1", "port": 6380},
-    {"host": "127.0.0.1", "port": 6381},
-    {"host": "127.0.0.1", "port": 6382},
-]
+# REDIS_CONFIGS = [
+#     {"host": "127.0.0.1", "port": 6379},
+#     {"host": "127.0.0.1", "port": 6380},
+#     {"host": "127.0.0.1", "port": 6381},
+#     {"host": "127.0.0.1", "port": 6382},
+# ]
 
 def create_redis_clients():
     """创建Redis客户端列表，配置健康检查和超时参数"""
