@@ -6,7 +6,6 @@ catboost_info/
 results/
 *.duckdb
 *.duckdb.wal
-*.txt
 *.parquet
 
 # C extensions
