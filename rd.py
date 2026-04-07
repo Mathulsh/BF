@@ -278,7 +278,7 @@ def collect_redis_results_to_duckdb(
 ):
     con = duckdb.connect(duckdb_path)
     con.execute("""
-                CREATE TABLE results (
+                CREATE TABLE IF NOT EXISTS results(
                     features INTEGER[],
                     mean_f1_macro DOUBLE,
                     mean_accuracy DOUBLE,
