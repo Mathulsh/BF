@@ -8,20 +8,20 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 # Redis配置——hz
-REDIS_CONFIGS = [
-    {"host": "10.64.199.62", "port": 41882},
-    {"host": "10.64.199.65", "port": 41979},
-    {"host": "10.64.199.63", "port": 41980},
-    {"host": "10.64.199.30", "port": 41995},
-]
+# REDIS_CONFIGS = [
+#     {"host": "10.64.199.62", "port": 41882},
+#     {"host": "10.64.199.65", "port": 41979},
+#     {"host": "10.64.199.63", "port": 41980},
+#     {"host": "10.64.199.30", "port": 41995},
+# ]
 
 # Redis配置——bj
-# REDIS_CONFIGS = [
-#     {"host": "172.19.123.200", "port": 40069},
-#     {"host": "172.19.123.200", "port": 40071},
-#     {"host": "172.19.123.200", "port": 40072},
-#     {"host": "172.19.123.200", "port": 40073},
-# ]
+REDIS_CONFIGS = [
+    {"host": "172.19.123.200", "port": 40069},
+    {"host": "172.19.123.200", "port": 40071},
+    {"host": "172.19.123.200", "port": 40072},
+    {"host": "172.19.123.200", "port": 40073},
+]
 
 # Redis配置——本地
 # REDIS_CONFIGS = [
@@ -279,6 +279,23 @@ def collect_redis_results_to_duckdb(
     idle_timeout=30,
 
 ):
+    import signal
+    import sys
+    
+    # 全局标志用于控制优雅退出
+    should_stop = False
+    
+    def signal_handler(signum, frame):
+        """处理 Ctrl+C 信号"""
+        nonlocal should_stop
+        print("\n\n🛑 收到中断信号，正在优雅退出...")
+        print("   等待当前批次处理完成...")
+        should_stop = True
+    
+    # 注册信号处理器
+    original_sigint = signal.signal(signal.SIGINT, signal_handler)
+    original_sigterm = signal.signal(signal.SIGTERM, signal_handler)
+    
     con = duckdb.connect(duckdb_path)
     con.execute("""
                 CREATE TABLE IF NOT EXISTS results(
@@ -289,51 +306,72 @@ def collect_redis_results_to_duckdb(
                 )
             """)
     print("🚀 Fast collector started")
+    print("   提示: 按 Ctrl+C 可优雅退出\n")
     
     total_count = 0
     empty_rounds = 0
     t_start = time.time()
+    
+    try:
+        while True:
+            any_data = False
 
-    while True:
-        any_data = False
+            for r in redis_list:
+                pipe = r.pipeline(transaction=False)
+                for _ in range(batch_size):
+                    pipe.rpop("results")
+                items = pipe.execute()
+                items = [x for x in items if x is not None]
 
-        for r in redis_list:
-            pipe = r.pipeline(transaction=False)
-            for _ in range(batch_size):
-                pipe.rpop("results")
-            items = pipe.execute()
-            items = [x for x in items if x is not None]
+                if not items:
+                    continue
 
-            if not items:
-                continue
+                any_data = True
 
-            any_data = True
+                rows = []
+                now = datetime.datetime.now()
+                for item in items:
+                    data = pickle.loads(item)
+                    rows.append((data["features"], float(data["mean_f1_macro"]), float(data["mean_accuracy"]), now))
 
-            rows = []
-            now = datetime.datetime.now()
-            for item in items:
-                data = pickle.loads(item)
-                rows.append((data["features"], float(data["mean_f1_macro"]), float(data["mean_accuracy"]), now))
+                n = len(rows)
+                total_count += n
 
-            n = len(rows)
-            total_count += n
+                df = pd.DataFrame(rows, columns=["features", "mean_f1_macro", "mean_accuracy", "created_at"])
+                con.register("tmp_df", df)
+                con.execute("INSERT INTO results SELECT * FROM tmp_df")
+                con.unregister("tmp_df")
 
-            df = pd.DataFrame(rows, columns=["features", "mean_f1_macro", "mean_accuracy", "created_at"])
-            con.register("tmp_df", df)
-            con.execute("INSERT INTO results SELECT * FROM tmp_df")
-            con.unregister("tmp_df")
+                # 每批打印一行，不覆盖，方便回溯
+                elapsed = time.time() - t_start
+                print(f"  +{n:<7,} → 累计 {total_count:>12,} 条 | {elapsed:6.1f}s", flush=True)
 
-            # 每批打印一行，不覆盖，方便回溯
-            elapsed = time.time() - t_start
-            print(f"  +{n:<7,} → 累计 {total_count:>12,} 条 | {elapsed:6.1f}s", flush=True)
-
-        if not any_data:
-            empty_rounds += 1
-            if empty_rounds >= 20:
+            if not any_data:
+                empty_rounds += 1
+                if empty_rounds >= 20:
+                    break
+                time.sleep(0.1)
+            else:
+                empty_rounds = 0
+            
+            # 检查是否需要优雅退出
+            if should_stop:
+                print(f"\n⏹️  正在停止收集...")
                 break
-            time.sleep(0.1)
+    
+    finally:
+        # 恢复原始信号处理器
+        signal.signal(signal.SIGINT, original_sigint)
+        signal.signal(signal.SIGTERM, original_sigterm)
+        
+        # 确保数据写入磁盘
+        if 'con' in locals():
+            con.commit()
+            con.close()
+        
+        elapsed = time.time() - t_start
+        if should_stop:
+            print(f"\n🛑 已优雅退出 | 已收集 {total_count:,} 条 | 耗时 {elapsed:.1f}s")
+            print(f"   数据已安全保存到: {duckdb_path}")
         else:
-            empty_rounds = 0
-
-    elapsed = time.time() - t_start
-    print(f"\n✅ 收集完成 | 总计 {total_count:,} 条 | 耗时 {elapsed:.1f}s")
+            print(f"\n✅ 收集完成 | 总计 {total_count:,} 条 | 耗时 {elapsed:.1f}s")
