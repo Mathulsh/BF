@@ -20,7 +20,7 @@ REDIS_CONFIGS = [
     {"host": "172.19.123.200", "port": 40069},
     {"host": "172.19.123.200", "port": 40071},
     {"host": "172.19.123.200", "port": 40072},
-    {"host": "172.19.123.200", "port": 40073},
+    {"host": "172.19.123.220", "port": 40075},
 ]
 
 # Redis配置——本地
@@ -93,12 +93,19 @@ redis_list = create_redis_clients()
 idx = 0
 
 def push_to_redis(combs):
-    pipes = [r.pipeline() for r in redis_list]
+    # 过滤掉不可用的 Redis 连接
+    healthy_redis_list = [r for r in redis_list if r is not None]
+    
+    if not healthy_redis_list:
+        logger.error("没有可用的 Redis 实例，无法推送任务")
+        raise Exception("没有可用的 Redis 实例")
+    
+    pipes = [r.pipeline() for r in healthy_redis_list]
 
     for cb in combs:
         task = {"features": list(cb)}
 
-        i = hash(cb) % len(redis_list)
+        i = hash(cb) % len(healthy_redis_list)
         pipes[i].rpush("mylist", pickle.dumps(task))
 
     for pipe in pipes:

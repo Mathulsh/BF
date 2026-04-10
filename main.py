@@ -167,7 +167,7 @@ def train_models():
             try:
                 task_int = [int(t) for t in task]
                 X = data.loc[:, task_int].values
-                model = GradientBoostingClassifier(random_state=0)
+                model = xgb.XGBClassifier(random_state=0)
                 cv = list(StratifiedKFold(n_splits=5, shuffle=True, random_state=42).split(np.zeros(len(y)), y))
                 scoring = ["f1_macro", "accuracy"]
                 scores = cross_validate(model, X, y, cv=cv, scoring=scoring, n_jobs=1)
