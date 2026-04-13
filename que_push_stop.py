@@ -19,8 +19,8 @@ signal.signal(signal.SIGINT, signal_handler)
 signal.signal(signal.SIGTERM, signal_handler)
 
 # 按顺序生成组合
-whole_numbers: list[int] = list(range(1, 44)) # 1-68标准化后的特征列
-comb = combinations(whole_numbers, 5)
+whole_numbers: list[int] = list(range(1, 100))
+comb = combinations(whole_numbers, 4)
 # 本机跑 
 # C(43,4) = 124,100(12w)
 # C(43,5) = 962,598(96w) 实际丢失了6824条
