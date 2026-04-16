@@ -3,11 +3,11 @@ import pickle
 import numpy as np
 import sys
 import multiprocessing as mp
-from catboost import CatBoostClassifier
-from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier, ExtraTreesClassifier, BaggingClassifier
-from sklearn.tree import DecisionTreeClassifier
-import xgboost as xgb
-import lightgbm as gbm
+from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier, ExtraTreesClassifier
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.svm import SVC
+from sklearn.neural_network import MLPClassifier
+import lightgbm as lgb
 import catboost as cat
 from sklearn.model_selection import cross_validate, StratifiedKFold
 from rd import read_one_from_redis, push_result_to_redis
@@ -35,7 +35,18 @@ def worker(worker_id: int):
             try:
                 task_int = [int(t) for t in task]
                 X = data.loc[:, task_int].values
-                model = cat.CatBoostClassifier(random_state=0, iterations=200 ,thread_count=1, verbose=False,loss_function='MultiClass')
+                model = lgb.LGBMClassifier(random_state=0, 
+                                            n_jobs=1,
+                                            # 小数据核心参数
+                                            min_data_in_leaf=1,
+                                            min_data_in_bin=1,
+                                            min_gain_to_split=0.0,
+                                            # 控制复杂度
+                                            num_leaves=8,
+                                            max_depth=3,
+                                            # 加速 + 稳定
+                                            max_bin=32,
+                                            verbosity=-1) # 修改算法
                 cv = list(StratifiedKFold(n_splits=5, shuffle=True, random_state=42).split(np.zeros(len(y)), y))
                 scoring = ["f1_macro", "accuracy"]
                 scores = cross_validate(model, X, y, cv=cv, scoring=scoring, n_jobs=1) # type: ignore
