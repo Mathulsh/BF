@@ -35,18 +35,7 @@ def worker(worker_id: int):
             try:
                 task_int = [int(t) for t in task]
                 X = data.loc[:, task_int].values
-                model = lgb.LGBMClassifier(random_state=0, 
-                                            n_jobs=1,
-                                            # 小数据核心参数
-                                            min_data_in_leaf=1,
-                                            min_data_in_bin=1,
-                                            min_gain_to_split=0.0,
-                                            # 控制复杂度
-                                            num_leaves=8,
-                                            max_depth=3,
-                                            # 加速 + 稳定
-                                            max_bin=32,
-                                            verbosity=-1) # 修改算法
+                model = MLPClassifier(random_state=0) # 修改算法
                 cv = list(StratifiedKFold(n_splits=5, shuffle=True, random_state=42).split(np.zeros(len(y)), y))
                 scoring = ["f1_macro", "accuracy"]
                 scores = cross_validate(model, X, y, cv=cv, scoring=scoring, n_jobs=1) # type: ignore
