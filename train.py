@@ -11,10 +11,16 @@ import lightgbm as lgb
 import catboost as cat
 from sklearn.model_selection import cross_validate, StratifiedKFold
 from rd import read_one_from_redis, push_result_to_redis
+import warnings
+from sklearn.exceptions import ConvergenceWarning
+# 屏蔽 sklearn 收敛警告
+warnings.filterwarnings("ignore", category=ConvergenceWarning)
+# 屏蔽 numpy 相关 RuntimeWarning
+warnings.filterwarnings("ignore", category=RuntimeWarning)
+
 
 data = pickle.load(open("data_99_3cls_train.pkl", "rb"))
 y = data.values[:, -1]
-
 
 def worker(worker_id: int):
     """单个 worker 的训练循环"""
