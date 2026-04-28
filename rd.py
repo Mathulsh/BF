@@ -312,46 +312,54 @@ def collect_redis_results_to_duckdb(
                     created_at TIMESTAMP
                 )
             """)
+    # 在外层循环前设置，减少 checkpoint 频率
+    con.execute("SET wal_autocheckpoint='100MB'")
     print("🚀 Fast collector started")
     print("   提示: 按 Ctrl+C 可优雅退出\n")
-    
     total_count = 0
     empty_rounds = 0
     t_start = time.time()
-    
+    FLUSH_THRESHOLD = 500000  # 攒够多少条再写入，可调整
+    rows = []
     try:
         while True:
             any_data = False
-
             for r in redis_list:
                 pipe = r.pipeline(transaction=False)
                 for _ in range(batch_size):
                     pipe.rpop("results")
                 items = pipe.execute()
                 items = [x for x in items if x is not None]
-
+                
                 if not items:
                     continue
-
+                
                 any_data = True
-
-                rows = []
                 now = datetime.datetime.now()
+                
                 for item in items:
                     data = pickle.loads(item)
                     rows.append((data["features"], float(data["mean_f1_macro"]), float(data["mean_accuracy"]), now))
 
-                n = len(rows)
-                total_count += n
-
+                # 每批写入一次
+                if len(rows) >= FLUSH_THRESHOLD:
+                    n = len(rows)
+                    total_count += n
+                    df = pd.DataFrame(rows, columns=["features", "mean_f1_macro", "mean_accuracy", "created_at"])
+                    con.register("tmp_df", df)
+                    con.execute("INSERT INTO results SELECT * FROM tmp_df")
+                    con.unregister("tmp_df")
+                    # 每批打印一行，不覆盖，方便回溯
+                    elapsed = time.time() - t_start
+                    print(f"  +{n:<7,} → 累计 {total_count:>12,} 条 | {elapsed:6.1f}s", flush=True)
+                    rows = []
+                    
+            # 循环结束后写入剩余数据
+            if rows:
                 df = pd.DataFrame(rows, columns=["features", "mean_f1_macro", "mean_accuracy", "created_at"])
-                con.register("tmp_df", df)
-                con.execute("INSERT INTO results SELECT * FROM tmp_df")
-                con.unregister("tmp_df")
-
-                # 每批打印一行，不覆盖，方便回溯
-                elapsed = time.time() - t_start
-                print(f"  +{n:<7,} → 累计 {total_count:>12,} 条 | {elapsed:6.1f}s", flush=True)
+                con.execute("INSERT INTO results SELECT * FROM df")
+                total_count += len(rows)
+                print(f"  +{len(rows):<7,} → 累计 {total_count:>12,} 条 | 最终写入", flush=True)
 
             if not any_data:
                 empty_rounds += 1
@@ -360,7 +368,7 @@ def collect_redis_results_to_duckdb(
                 time.sleep(0.1)
             else:
                 empty_rounds = 0
-            
+                
             # 检查是否需要优雅退出
             if should_stop:
                 print(f"\n⏹️  正在停止收集...")
