@@ -41,7 +41,7 @@ def worker(worker_id: int):
             try:
                 task_int = [int(t) for t in task]
                 X = data.loc[:, task_int].values
-                model = RandomForestClassifier(random_state=0, n_jobs=1) # 修改算法
+                model = ExtraTreesClassifier(random_state=0) # 修改算法
                 cv = list(StratifiedKFold(n_splits=5, shuffle=True, random_state=42).split(np.zeros(len(y)), y))
                 scoring = ["f1_macro", "accuracy"]
                 scores = cross_validate(model, X, y, cv=cv, scoring=scoring, n_jobs=1) # type: ignore
