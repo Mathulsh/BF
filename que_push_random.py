@@ -32,7 +32,7 @@ def generate_task(seed: int):
     用 seed 控制随机空间（完全可复现 + 无状态）
     """
     rng = random.Random(seed)
-    return tuple(sorted(rng.sample(range(1, 100), 7)))
+    return tuple(sorted(rng.sample(range(1, 100), 6)))
 
 
 # =========================

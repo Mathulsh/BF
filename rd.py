@@ -8,20 +8,20 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 # Redis配置——hz
-# REDIS_CONFIGS = [
-#     {"host": "10.64.199.62", "port": 41882},
-#     {"host": "10.64.199.65", "port": 41979},
-#     {"host": "10.64.199.63", "port": 41980},
-#     {"host": "10.64.199.30", "port": 41995},
-# ]
+REDIS_CONFIGS = [
+    {"host": "10.64.199.62", "port": 41882},
+    #{"host": "10.64.199.65", "port": 41979},
+    {"host": "10.64.199.63", "port": 41980},
+    #{"host": "10.64.199.30", "port": 41995},
+]
 
 # Redis配置——bj
-REDIS_CONFIGS = [
-    {"host": "172.19.123.200", "port": 40042},
-    {"host": "172.19.123.210", "port": 40043},
-    {"host": "172.19.123.200", "port": 40044},
-    {"host": "172.19.123.203", "port": 40045},
-]
+# REDIS_CONFIGS = [
+#     {"host": "172.19.123.200", "port": 40042},
+#     {"host": "172.19.123.223", "port": 40045},
+#     {"host": "172.19.123.200", "port": 40044},
+#     #{"host": "172.19.123.203", "port": 40043},
+# ]
 
 # Redis配置——本地
 # REDIS_CONFIGS = [
