@@ -19,16 +19,8 @@ signal.signal(signal.SIGINT, signal_handler)
 signal.signal(signal.SIGTERM, signal_handler)
 
 # 按顺序生成组合
-whole_numbers: list[int] = list(range(1, 100))
-comb = combinations(whole_numbers, 6)
-# 本机跑 
-# C(43,4) = 124,100(12w)
-# C(43,5) = 962,598(96w) 实际丢失了6824条
-# C(68,4) = 814,385种组合(81w)
-# 上集群跑
-# C(68,5) = 10,424,128种组合(1000w)
-# C(98,4) = 3,612,280种组合(360w)
-# C(98,5) = 67,910,864种组合(6800w)
+whole_numbers: list[int] = list(range(1, 99))
+comb = combinations(whole_numbers, 5)
 
 def batch_generator(iterable, batch_size, start_index=0):
     """分割可迭代对象为指定大小的批次避免内存溢出"""
@@ -84,15 +76,7 @@ if __name__ == "__main__":
         # 保存进度
         save_progress(i + 1)
         
-        # 查看所有batch
-        # batches = peek_all_batches()
-        # print(f"总batch数量: {len(batches)}")
-        
     # 处理完成，删除进度文件
     if os.path.exists("push_progress.txt"):
         os.remove("push_progress.txt")
-        
-    # print("All combinations have been pushed to Redis!")
-    
-    # time_end = time.time()
-    # print(f"Time cost: {time_end - time_start} seconds")
+

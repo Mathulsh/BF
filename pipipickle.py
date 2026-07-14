@@ -3,13 +3,13 @@ import pickle
 import pandas as pd # type: ignore
 
 # 去冗余且标准化后的csv文件
-df = pd.read_csv("/Users/lishihong/projects/Research/HEA/43_test copy.csv")
-# 装载pickle数据
+# df = pd.read_csv("98_test-分层划分.csv")
+# # 装载pickle数据
 
-with open("./data_43_3cls_test.pkl", "wb") as f:
-    pickle.dump(df, f)
+# with open("./BF/98_test.pkl", "wb") as f:
+#     pickle.dump(df, f)
 
 # 查看pickle数据
-# with open("/Users/lishihong/projects/Research/HEA/BF/data_43_3cls_train.pkl", "rb") as f:
-#     info = pickle.load(f)
-#     print(info)
+with open("/Users/lishihong/projects/Research/HEA/BF/98_test.pkl", "rb") as f:
+    info = pickle.load(f)
+    print(info)
