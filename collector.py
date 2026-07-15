@@ -7,6 +7,6 @@ collect_redis_results_to_duckdb(
     # redis_port=redis_port,
     # redis_password=redis_password,
     redis_list=redis_list,
-    duckdb_path="results.duckdb",
+    duckdb_path="/tmp/results.duckdb",
     batch_size=500000,
 )

@@ -18,8 +18,8 @@ def signal_handler(signum, frame):
 signal.signal(signal.SIGINT, signal_handler)
 signal.signal(signal.SIGTERM, signal_handler)
 
-# 按顺序生成组合
-whole_numbers: list[int] = list(range(1, 99))
+# 按顺序生成所有可能的特征索引组合
+whole_numbers: list[int] = list(range(0, 98)) # 0-97共98个特征索引
 comb = combinations(whole_numbers, 5)
 
 def batch_generator(iterable, batch_size, start_index=0):

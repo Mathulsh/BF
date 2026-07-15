@@ -20,8 +20,8 @@ warnings.filterwarnings("ignore", category=ConvergenceWarning)
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 
 
-data_train = pickle.load(open("BF/98_train.pkl", "rb"))
-data_test = pickle.load(open("BF/98_test.pkl", "rb"))
+data_train = pickle.load(open("98_train.pkl", "rb"))
+data_test = pickle.load(open("98_test.pkl", "rb"))
 y_train = data_train.values[:, -1]
 y_test = data_test.values[:, -1]
 

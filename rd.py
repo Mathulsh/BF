@@ -286,7 +286,7 @@ def safe_ack_processing(r: redis.Redis | None, raw_task: bytes | None, max_retri
 def collect_redis_results_to_duckdb(
     redis_list,
     duckdb_path="results.duckdb",
-    batch_size=20000,
+    batch_size=5000,
     idle_timeout=30,
 
 ):
@@ -310,10 +310,13 @@ def collect_redis_results_to_duckdb(
     con = duckdb.connect(duckdb_path)
     con.execute("""
                 CREATE TABLE IF NOT EXISTS results(
-                    features INTEGER[],
-                    mean_f1_macro DOUBLE,
-                    mean_accuracy DOUBLE,
-                    created_at TIMESTAMP
+                    features VARCHAR[],
+                    cv_f1_macro DOUBLE,
+                    cv_accuracy DOUBLE,
+                    train_f1_macro DOUBLE,
+                    train_accuracy DOUBLE,
+                    test_f1_macro DOUBLE,
+                    test_accuracy DOUBLE,
                 )
             """)
     # 在外层循环前设置，减少 checkpoint 频率
@@ -343,13 +346,13 @@ def collect_redis_results_to_duckdb(
                 
                 for item in items:
                     data = pickle.loads(item)
-                    rows.append((data["features"], float(data["mean_f1_macro"]), float(data["mean_accuracy"]), now))
+                    rows.append((data["features"], float(data["cv_f1_macro"]), float(data["cv_accuracy"]), float(data["train_f1_macro"]), float(data["train_accuracy"]), float(data["test_f1_macro"]), float(data["test_accuracy"])))
 
                 # 每批写入一次
                 if len(rows) >= FLUSH_THRESHOLD:
                     n = len(rows)
                     total_count += n
-                    df = pd.DataFrame(rows, columns=["features", "mean_f1_macro", "mean_accuracy", "created_at"])
+                    df = pd.DataFrame(rows, columns=["features", "cv_f1_macro", "cv_accuracy", "train_f1_macro", "train_accuracy", "test_f1_macro", "test_accuracy"])
                     con.register("tmp_df", df)
                     con.execute("INSERT INTO results SELECT * FROM tmp_df")
                     con.unregister("tmp_df")
@@ -360,7 +363,7 @@ def collect_redis_results_to_duckdb(
                     
             # 循环结束后写入剩余数据
             if rows:
-                df = pd.DataFrame(rows, columns=["features", "mean_f1_macro", "mean_accuracy", "created_at"])
+                df = pd.DataFrame(rows, columns=["features", "cv_f1_macro", "cv_accuracy", "train_f1_macro", "train_accuracy", "test_f1_macro", "test_accuracy"])
                 con.execute("INSERT INTO results SELECT * FROM df")
                 total_count += len(rows)
                 print(f"  +{len(rows):<7,} → 累计 {total_count:>12,} 条 | 最终写入", flush=True)
