@@ -18,9 +18,15 @@ def signal_handler(signum, frame):
 signal.signal(signal.SIGINT, signal_handler)
 signal.signal(signal.SIGTERM, signal_handler)
 
-# 按顺序生成所有可能的特征索引组合
-whole_numbers: list[int] = list(range(0, 97)) # 0-96共97个特征索引
-comb = combinations(whole_numbers, 4)
+# 固定 0 索引，生成其他特征索引组合
+fixed = 0
+feature_num = 98          # 总特征数
+k = 5                     # 最终组合大小
+others = [i for i in range(feature_num) if i != fixed]
+comb = (
+    tuple(sorted((fixed, *c)))
+    for c in combinations(others, k - 1)
+)
 
 def batch_generator(iterable, batch_size, start_index=0):
     """分割可迭代对象为指定大小的批次避免内存溢出"""

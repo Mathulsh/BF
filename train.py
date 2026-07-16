@@ -47,8 +47,8 @@ def worker(worker_id: int):
                 X_train = data_train.iloc[:, feature_idx].values
                 X_test = data_test.iloc[:, feature_idx].values
                 
-                model = RandomForestClassifier(random_state=42,n_jobs=1) # 修改算法
-                cv = list(StratifiedKFold(n_splits=5, shuffle=True, random_state=42).split(np.zeros(len(y_train)), y_train))
+                model = RandomForestClassifier(random_state=0,n_jobs=1) # 修改算法
+                cv = list(StratifiedKFold(n_splits=5, shuffle=True, random_state=0).split(np.zeros(len(y_train)), y_train))
                 scoring = ["f1_macro", "accuracy"]
                 scores = cross_validate(
                     model, 
