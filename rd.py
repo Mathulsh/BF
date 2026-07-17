@@ -2,7 +2,7 @@
 import redis, pandas as pd
 import pickle, time, duckdb, datetime
 import logging
-
+import signal 
 # 配置日志
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -288,11 +288,7 @@ def collect_redis_results_to_duckdb(
     duckdb_path="results.duckdb",
     batch_size=5000,
     idle_timeout=30,
-
 ):
-    import signal
-    import sys
-    
     # 全局标志用于控制优雅退出
     should_stop = False
     
@@ -323,11 +319,26 @@ def collect_redis_results_to_duckdb(
     con.execute("SET wal_autocheckpoint='100MB'")
     print("🚀 Fast collector started")
     print("   提示: 按 Ctrl+C 可优雅退出\n")
+    
+    COLS = ["features", "cv_f1_macro", "cv_accuracy", "train_f1_macro",
+            "train_accuracy", "test_f1_macro", "test_accuracy"]
     total_count = 0
     empty_rounds = 0
-    t_start = time.time()
     FLUSH_THRESHOLD = 500000  # 攒够多少条再写入，可调整
     rows = []
+    
+    def flush():
+        """写入并清空，没数据则什么都不做"""
+        nonlocal total_count, rows
+        if not rows:
+            return
+        n = len(rows)
+        df = pd.DataFrame(rows, columns=COLS)
+        con.execute("INSERT INTO results SELECT * FROM df")
+        total_count += n
+        print(f"  +{n:<7,} → 累计 {total_count:>12,} 条", flush=True)
+        rows = []   # ← 关键修复：写完必须清空
+        
     try:
         while True:
             any_data = False
@@ -340,34 +351,17 @@ def collect_redis_results_to_duckdb(
                 
                 if not items:
                     continue
-                
                 any_data = True
-                now = datetime.datetime.now()
-                
+                                
                 for item in items:
                     data = pickle.loads(item)
                     rows.append((data["features"], float(data["cv_f1_macro"]), float(data["cv_accuracy"]), float(data["train_f1_macro"]), float(data["train_accuracy"]), float(data["test_f1_macro"]), float(data["test_accuracy"])))
 
                 # 每批写入一次
                 if len(rows) >= FLUSH_THRESHOLD:
-                    n = len(rows)
-                    total_count += n
-                    df = pd.DataFrame(rows, columns=["features", "cv_f1_macro", "cv_accuracy", "train_f1_macro", "train_accuracy", "test_f1_macro", "test_accuracy"])
-                    con.register("tmp_df", df)
-                    con.execute("INSERT INTO results SELECT * FROM tmp_df")
-                    con.unregister("tmp_df")
-                    # 每批打印一行，不覆盖，方便回溯
-                    elapsed = time.time() - t_start
-                    print(f"  +{n:<7,} → 累计 {total_count:>12,} 条 | {elapsed:6.1f}s", flush=True)
-                    rows = []
+                    flush()
+            flush()
                     
-            # 循环结束后写入剩余数据
-            if rows:
-                df = pd.DataFrame(rows, columns=["features", "cv_f1_macro", "cv_accuracy", "train_f1_macro", "train_accuracy", "test_f1_macro", "test_accuracy"])
-                con.execute("INSERT INTO results SELECT * FROM df")
-                total_count += len(rows)
-                print(f"  +{len(rows):<7,} → 累计 {total_count:>12,} 条 | 最终写入", flush=True)
-
             if not any_data:
                 empty_rounds += 1
                 if empty_rounds >= 20:
@@ -376,7 +370,6 @@ def collect_redis_results_to_duckdb(
             else:
                 empty_rounds = 0
                 
-            # 检查是否需要优雅退出
             if should_stop:
                 print(f"\n⏹️  正在停止收集...")
                 break
@@ -391,9 +384,8 @@ def collect_redis_results_to_duckdb(
             con.commit()
             con.close()
         
-        elapsed = time.time() - t_start
         if should_stop:
-            print(f"\n🛑 已优雅退出 | 已收集 {total_count:,} 条 | 耗时 {elapsed:.1f}s")
+            print(f"\n🛑 已优雅退出 | 已收集 {total_count:,} 条")
             print(f"   数据已安全保存到: {duckdb_path}")
         else:
-            print(f"\n✅ 收集完成 | 总计 {total_count:,} 条 | 耗时 {elapsed:.1f}s")
+            print(f"\n✅ 收集完成 | 总计 {total_count:,} 条")
