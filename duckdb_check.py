@@ -1,3 +1,12 @@
+"""结果库检查脚本：统计条数、查看 Top-N、合并多个 DuckDB、查漏补算。
+
+当前默认连接一个历史实验库，请按实际路径修改 ``duckdb.connect(...)`` 的
+参数后再运行。文件后半部分的「合并库」与「查漏并重新推送」代码默认注释，
+需要时取消注释并按实际特征范围/组合长度调整。
+
+用法：
+    python duckdb_check.py
+"""
 import duckdb
 import pandas as pd
 from pandas import DataFrame

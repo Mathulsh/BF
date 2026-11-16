@@ -1,39 +1,50 @@
-'''功能函数:redis读写模块'''
+"""Redis 读写模块：任务队列的推送、领取、结果回写与落库。
+
+队列约定（每个 Redis 实例上的同名键）：
+    mylist              待处理任务（RPUSH 写入，LMOVE 领取）
+    mylist:processing   已领取但未 ACK 的在途任务
+    results             训练结果
+
+本模块在 import 时即按 REDIS_CONFIGS 建立连接并 ping，因此离线环境下会打印
+连接失败日志；失败的实例记为 None，后续由 get_healthy_redis_clients() 尝试重连。
+"""
+from __future__ import annotations
+
 import redis, pandas as pd
 import pickle, time, duckdb, datetime
 import logging
-import signal 
+import signal
 # 配置日志
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Redis配置——hz
+# Redis配置——hz 4个
 # REDIS_CONFIGS = [
-#     {"host": "10.64.199.62", "port": 41882},
-#     {"host": "10.64.199.82", "port": 40090},
-#     {"host": "10.64.199.63", "port": 41980},
-#     {"host": "10.64.199.23", "port": 40091},
+#      {"host": "10.64.198.82", "port": 40000},
+#      {"host": "10.64.199.30", "port": 40010},
+#      {"host": "10.64.198.83", "port": 40011},
+#      {"host": "10.64.199.29", "port": 40012},
 # ]
 
 # Redis配置——bj 8个
-REDIS_CONFIGS = [
-    {"host": "172.19.123.201", "port": 40042},
-    {"host": "172.19.123.201", "port": 40043},
-    {"host": "172.19.123.201", "port": 40044},
-    {"host": "172.19.123.201", "port": 40045},
-    {"host": "172.19.123.201", "port": 40057},
-    {"host": "172.19.123.201", "port": 40068},
-    {"host": "172.19.123.201", "port": 40072},
-    {"host": "172.19.123.201", "port": 40073},
-]
+# REDIS_CONFIGS = [
+#     {"host": "172.19.123.221", "port": 40042},
+#     {"host": "172.19.123.221", "port": 40043},
+#     {"host": "172.19.123.221", "port": 40044},
+#     {"host": "172.19.123.221", "port": 40045},
+#     {"host": "172.19.123.221", "port": 40057},
+#     {"host": "172.19.123.221", "port": 40067},
+#     {"host": "172.19.123.221", "port": 40068},
+#     {"host": "172.19.123.221", "port": 40069},
+# ]
 
 # Redis配置——本地
-# REDIS_CONFIGS = [
-#     {"host": "127.0.0.1", "port": 6379},
-#     {"host": "127.0.0.1", "port": 6380},
-#     {"host": "127.0.0.1", "port": 6381},
-#     {"host": "127.0.0.1", "port": 6382},
-# ]
+REDIS_CONFIGS = [
+    {"host": "127.0.0.1", "port": 6379},
+    {"host": "127.0.0.1", "port": 6380},
+    {"host": "127.0.0.1", "port": 6381},
+    {"host": "127.0.0.1", "port": 6382},
+]
 
 def create_redis_clients():
     """创建Redis客户端列表，配置健康检查和超时参数"""
@@ -97,6 +108,18 @@ redis_list = create_redis_clients()
 idx = 0
 
 def push_to_redis(combs):
+    """把一批特征索引组合推送到各个 Redis 实例的待处理队列。
+
+    每个组合被包装成 {"features": [...]} 后 pickle 序列化，按
+    ``hash(组合) % 健康实例数`` 分片写入对应实例的 ``mylist``；
+    整批写入通过 pipeline 一次性提交，减少网络往返。
+
+    Args:
+        combs: 可迭代的组合集合，元素为可迭代的特征索引（如 tuple）。
+
+    Raises:
+        Exception: 所有 Redis 实例均不可用时抛出。
+    """
     # 过滤掉不可用的 Redis 连接
     healthy_redis_list = [r for r in redis_list if r is not None]
     
@@ -115,16 +138,37 @@ def push_to_redis(combs):
     for pipe in pipes:
         pipe.execute()
 
-def read_one_from_redis() -> tuple[list[list[str]] | None, bytes | None, Exception | None, redis.Redis | None]:
-    """从多个 Redis 轮询读取任务（真正负载均衡版，带故障转移）"""
+def read_one_from_redis(timeout: float | None = None) -> tuple[list[list[str]] | None, bytes | None, Exception | None, redis.Redis | None]:
+    """从多个 Redis 实例轮询领取任务（负载均衡 + 故障转移）。
+
+    用 ``LMOVE mylist → mylist:processing``（LEFT → RIGHT）原子地完成领取：
+    任务一旦被搬走，其他 worker 就不会重复拿到它。
+
+    Args:
+        timeout: 最长等待秒数；None（默认）表示阻塞等待，直到领到任务或出错。
+            设为正数时，等待超过该时长仍无任务则返回全 None 的四元组，
+            便于调用方实现「队列空闲后退出」。
+
+    Returns:
+        tuple: (tasks, raw_task, err, source_redis)
+
+        - tasks: list[list[str]] | None，特征索引（字符串形式）；
+          若任务体是 list（批量任务）则会展开为多条。
+        - raw_task: bytes | None，原始 pickle 字节，用于结果回写时 ACK。
+        - err: Exception | None，读取过程中的异常（超时不属于异常）。
+        - source_redis: redis.Redis | None，任务所属实例，优先向该实例回写结果。
+    """
     global idx
-    
+    deadline = None if timeout is None else time.time() + timeout
+
     while True:
         # 获取健康的Redis客户端
         healthy_clients = get_healthy_redis_clients()
         if not healthy_clients:
             logger.error("所有 Redis 实例均不可用，等待重试...")
             time.sleep(1)
+            if deadline is not None and time.time() >= deadline:
+                return None, None, None, None
             continue
         
         n = len(healthy_clients)
@@ -163,7 +207,7 @@ def read_one_from_redis() -> tuple[list[list[str]] | None, bytes | None, Excepti
                 else:
                     tasks = [list(map(str, data["features"]))]
 
-                return tasks, data_bytes, None, r
+                return tasks, data_bytes, None, r # type: ignore
 
             except (redis.ConnectionError, redis.TimeoutError) as e:
                 logger.warning(f"Redis 连接错误，将尝试其他实例: {e}")
@@ -173,6 +217,8 @@ def read_one_from_redis() -> tuple[list[list[str]] | None, bytes | None, Excepti
 
         # ❗所有 Redis 都空 → sleep
         time.sleep(0.01)
+        if deadline is not None and time.time() >= deadline:
+            return None, None, None, None
         
 def push_result_to_redis(
     *,
@@ -289,6 +335,23 @@ def collect_redis_results_to_duckdb(
     batch_size=5000,
     idle_timeout=30,
 ):
+    """把 Redis 中的训练结果批量导入 DuckDB。
+
+    对各实例的 ``results`` 队列循环执行批量 RPOP：攒够一批就写入 DuckDB 的
+    ``results`` 表（表不存在时自动创建），连续多轮取不到数据后自动结束。
+    运行期间可通过 Ctrl+C 优雅退出，已处理的数据会正常落盘。
+
+    Args:
+        redis_list: Redis 客户端列表，不可用实例为 None。
+        duckdb_path: 结果库文件路径，不存在时自动创建。
+        batch_size: 每个实例每次 RPOP 的条数。
+        idle_timeout: 预留参数，当前实现以固定空轮次（20 轮 × 0.1s）判断退出。
+
+    Note:
+        结果表结构为 (features, cv_f1_macro, cv_accuracy, train_f1_macro,
+        train_accuracy, test_f1_macro, test_accuracy)；重复运行会追加写入，
+        需要按 features 去重。
+    """
     # 全局标志用于控制优雅退出
     should_stop = False
     

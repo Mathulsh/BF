@@ -39,6 +39,15 @@ def generate_task(seed: int):
 # seed 流式生成（关键优化）
 # =========================
 def seed_stream(start: int, end: int):
+    """流式产出 seed，避免一次性构造上亿个 seed 的列表。
+
+    Args:
+        start: 起始 seed（含）。
+        end: 结束 seed（不含）。
+
+    Yields:
+        int: 自 start 递增到 end-1 的 seed。
+    """
     for seed in range(start, end):
         yield seed
 
@@ -47,6 +56,15 @@ def seed_stream(start: int, end: int):
 # batch 切分（流式，不占内存）
 # =========================
 def batch_generator(iterable, batch_size: int):
+    """把可迭代对象切分为固定大小的批次（流式，不占内存）。
+
+    Args:
+        iterable: 待切分的数据源（此处为 seed 流）。
+        batch_size: 每个批次最多包含的元素个数。
+
+    Yields:
+        list: 一个批次的数据；数据源耗尽时结束。
+    """
     it = iter(iterable)
     while True:
         batch = list(islice(it, batch_size))
@@ -59,6 +77,11 @@ def batch_generator(iterable, batch_size: int):
 # 断点读取
 # =========================
 def get_last_processed_batch():
+    """从进度文件读取上次处理到的批次索引。
+
+    Returns:
+        int: 已完成的批次数；文件不存在或内容非法时返回 0。
+    """
     path = "push_progress.txt"
     if os.path.exists(path):
         try:
@@ -69,6 +92,11 @@ def get_last_processed_batch():
 
 
 def save_progress(batch_idx: int):
+    """把已完成的批次索引写入进度文件。
+
+    Args:
+        batch_idx: 已完成的批次数。
+    """
     with open("push_progress.txt", "w") as f:
         f.write(str(batch_idx))
 
